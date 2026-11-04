@@ -458,6 +458,9 @@ Provider adapters shipped in the gateway today (see the [channel support matrix]
 ## <a name="documentation"></a>Documentation
 
 - [**Product user manual**](https://neo-flying.feishu.cn/docx/JGNTdsjJuo748TxJkxecoYs2nth) — full UI walkthrough (Feishu)
+- [**Project Wiki**](./docs/wiki/README.md) — 项目百科：16 篇功能文档 + 11 册逐文件参考，覆盖 453 个后端文件 / 387 个端点 / 51 种任务类型（面向开发者，中文）
+  - [文档地图与覆盖度](./docs/wiki/00-文档地图与覆盖度.md) — 先看这篇，了解哪些地方是硬边界
+  - [逐文件参考](./docs/wiki/files/README.md) — 按目录组织的文件级说明
 - [Feature overview](./docs/en/concepts/features.md)
 - [Architecture](./docs/en/concepts/architecture.md)
 - [Quick Start](./docs/en/getting-started/quickstart.md)
