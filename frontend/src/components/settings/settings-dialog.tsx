@@ -57,16 +57,10 @@ import {
 } from "@/lib/feature-models";
 import {
   useModelGatewayConfig,
-  useOfficialMediaCatalogStatus,
-  useSaveOfficialMediaCatalogPreferences,
-  useCheckOfficialMediaCatalog,
   useNewApiChannelTypes,
-  useEnableOfficial,
   useEnableCustom,
-  useEnableHybrid,
   useEnableBrainClaw,
   useSaveAgentLlmConfig,
-  useSaveOfficialConfig,
   useSaveBrainClawConfig,
   useSetCustomLlmMode,
   useInitCustomNewApi,
@@ -269,7 +263,8 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   );
 }
 
-const GATEWAY_MODES: GatewayMode[] = ["official", "custom", "hybrid"];
+// 渠道只保留「自定义」。官方与「本地+官方混合」已下线，不再出现在选项里。
+const GATEWAY_MODES: GatewayMode[] = ["custom"];
 
 const DEFAULT_CUSTOM_NEWAPI_URL = "http://127.0.0.1:3000";
 
@@ -356,25 +351,18 @@ function ModelConfigSection({ open }: { open: boolean }) {
   const configQuery = useModelGatewayConfig(open);
   const config = configQuery.data?.data;
   const loading = configQuery.isLoading;
-  const enableOfficialMode = useEnableOfficial();
   const enableCustomMode = useEnableCustom();
-  const enableHybridMode = useEnableHybrid();
   const modelGatewayMissing = config
     ? !config.effective.configured || !config.llmEffective.configured
     : false;
 
-  const [mode, setMode] = useState<GatewayMode>("official");
-  const modeChosenByUser = useRef(false);
+  // 只提供「自定义」一种渠道，mode 恒为该值；不再有可切换的 tab 状态。
+  const mode: GatewayMode = "custom";
   const [customLlmMode, setCustomLlmMode] =
     useState<CustomLlmMode>("relayclaw_brainclaw");
   const updateCustomLlmMode = useSetCustomLlmMode();
-  // 配置加载后，把激活的 tab 同步到服务端当前 mode。
+  // 服务端当前生效的渠道：与 "custom" 不同时露出「激活」按钮。
   const serverMode = config?.mode;
-  useEffect(() => {
-    if (serverMode && !modeChosenByUser.current) {
-      setMode((current) => (current === serverMode ? current : serverMode));
-    }
-  }, [serverMode]);
   useEffect(() => {
     if (config?.custom.llmMode) {
       setCustomLlmMode(config.custom.llmMode);
@@ -418,26 +406,12 @@ function ModelConfigSection({ open }: { open: boolean }) {
   // CE owns one local SQLite-backed NewAPI instance. Database paths and the
   // root username are deployment details, not user-editable model settings.
   const customDatabase: NewApiDatabaseConfigInput | undefined = undefined;
-  const selectedModeConfigured =
-    mode === "official"
-      ? Boolean(config?.official?.configured)
-      : mode === "custom"
-        ? Boolean(config?.custom?.configured)
-        : Boolean(config?.official?.configured && config?.custom?.configured);
-  const activatingMode =
-    enableOfficialMode.isPending ||
-    enableCustomMode.isPending ||
-    enableHybridMode.isPending;
+  const selectedModeConfigured = Boolean(config?.custom?.configured);
+  const activatingMode = enableCustomMode.isPending;
 
   const handleActivateMode = async () => {
-    const mutation =
-      mode === "official"
-        ? enableOfficialMode
-        : mode === "custom"
-          ? enableCustomMode
-          : enableHybridMode;
     try {
-      const response = await mutation.mutateAsync();
+      const response = await enableCustomMode.mutateAsync();
       if (!response.ok) {
         toast.error(
           getResponseErrorMessage(
@@ -518,15 +492,7 @@ function ModelConfigSection({ open }: { open: boolean }) {
 
       <AgentLlmPanel config={config} loading={loading} />
 
-      <Tabs
-        className="mt-4"
-        value={mode}
-        onValueChange={(value) => {
-          const nextMode = value as GatewayMode;
-          modeChosenByUser.current = true;
-          setMode(nextMode);
-        }}
-      >
+      <Tabs className="mt-4" value={mode}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <TabsList>
             {GATEWAY_MODES.map((m) => (
@@ -557,117 +523,70 @@ function ModelConfigSection({ open }: { open: boolean }) {
         </div>
       </Tabs>
 
-      <div className="mt-4">
-        {mode === "official" || mode === "hybrid" ? (
-          <OfficialGatewayPanel
-            config={config}
-            loading={loading}
-            activateHybrid={mode === "hybrid"}
-          />
-        ) : null}
+      {/* 功能模型映射仅在自定义渠道展示。 */}
+      <CustomGatewayPanel
+        config={config}
+        loading={loading}
+        baseUrl={customBaseUrl}
+      />
+      <QuickLocalNewApiSetup
+        config={config}
+        loading={loading}
+        newApiBaseUrl={customBaseUrl}
+        database={customDatabase}
+      />
+      <div className="mt-5">
+        <Tabs value={customLlmMode} onValueChange={handleCustomLlmModeChange}>
+          <TabsList>
+            <TabsTrigger value="relayclaw_brainclaw">
+              {t("settings.modelConfig.brainclaw.tab")}
+            </TabsTrigger>
+            <TabsTrigger value="advanced">
+              {t("settings.modelConfig.brainclaw.advancedTab")}
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
-
-      {/* 功能模型映射仅在自定义渠道展示；官方渠道不需要。 */}
-      {mode === "custom" || mode === "hybrid" ? (
+      {customLlmMode === "relayclaw_brainclaw" ? (
         <>
-          <CustomGatewayPanel
-            config={config}
-            loading={loading}
-            baseUrl={customBaseUrl}
-            activateHybrid={mode === "hybrid"}
+          <BrainClawGatewayPanel config={config} loading={loading} />
+          <FeatureModelsBlock
+            showAdvancedLlm={false}
+            newApiBaseUrl={customBaseUrl}
+            database={customDatabase}
+            channelTypesEnabled={Boolean(
+              config?.custom?.configured &&
+              config?.provisioner?.database?.available,
+            )}
+            savedProviderChannels={
+              config?.provisioner?.providerChannels ?? []
+            }
+            savedEmbeddingModel={config?.provisioner?.embeddingModel}
+            savedMediaModels={config?.provisioner?.mediaModels ?? {}}
           />
-          {mode === "custom" ? (
-            <>
-              <QuickLocalNewApiSetup
-                config={config}
-                loading={loading}
-                newApiBaseUrl={customBaseUrl}
-                database={customDatabase}
-              />
-              <div className="mt-5">
-                <Tabs
-                  value={customLlmMode}
-                  onValueChange={handleCustomLlmModeChange}
-                >
-                  <TabsList>
-                    <TabsTrigger value="relayclaw_brainclaw">
-                      {t("settings.modelConfig.brainclaw.tab")}
-                    </TabsTrigger>
-                    <TabsTrigger value="advanced">
-                      {t("settings.modelConfig.brainclaw.advancedTab")}
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
-              </div>
-              {customLlmMode === "relayclaw_brainclaw" ? (
-                <>
-                  <BrainClawGatewayPanel config={config} loading={loading} />
-                  <FeatureModelsBlock
-                    showAdvancedLlm={false}
-                    newApiBaseUrl={customBaseUrl}
-                    database={customDatabase}
-                    channelTypesEnabled={Boolean(
-                      config?.custom?.configured &&
-                      config?.provisioner?.database?.available,
-                    )}
-                    savedProviderChannels={
-                      config?.provisioner?.providerChannels ?? []
-                    }
-                    savedEmbeddingModel={config?.provisioner?.embeddingModel}
-                    savedMediaModels={config?.provisioner?.mediaModels ?? {}}
-                  />
-                </>
-              ) : null}
-            </>
-          ) : null}
-          {mode === "hybrid" ? (
-            <details className="mt-5 rounded-md border border-border/70">
-              <summary className="cursor-pointer px-3 py-3 text-xs font-medium text-foreground">
-                {t("settings.modelConfig.quick.comfyConfig")}
-              </summary>
-              <div className="border-t border-border/70 px-3 pb-4">
-                <FeatureModelsBlock
-                  newApiBaseUrl={customBaseUrl}
-                  database={customDatabase}
-                  channelTypesEnabled={Boolean(
-                    config?.custom?.configured &&
-                    config?.provisioner?.database?.available,
-                  )}
-                  savedProviderChannels={
-                    config?.provisioner?.providerChannels ?? []
-                  }
-                  savedEmbeddingModel={config?.provisioner?.embeddingModel}
-                  savedMediaModels={config?.provisioner?.mediaModels ?? {}}
-                  defaultComfyWorkflows={HYBRID_COMFYUI_WORKFLOWS}
-                  mediaOnly
-                  comfyOnly
-                />
-              </div>
-            </details>
-          ) : null}
-          {mode === "custom" && customLlmMode === "advanced" ? (
-            <details className="mt-5 rounded-md border border-border/70">
-              <summary className="cursor-pointer px-3 py-3 text-xs font-medium text-foreground">
-                {t("settings.modelConfig.quick.advanced")}
-              </summary>
-              <div className="border-t border-border/70 px-3 pb-4">
-                <FeatureModelsBlock
-                  newApiBaseUrl={customBaseUrl}
-                  database={customDatabase}
-                  channelTypesEnabled={Boolean(
-                    config?.custom?.configured &&
-                    config?.provisioner?.database?.available,
-                  )}
-                  savedProviderChannels={
-                    config?.provisioner?.providerChannels ?? []
-                  }
-                  savedEmbeddingModel={config?.provisioner?.embeddingModel}
-                  savedMediaModels={config?.provisioner?.mediaModels ?? {}}
-                />
-              </div>
-            </details>
-          ) : null}
         </>
+      ) : null}
+      {customLlmMode === "advanced" ? (
+        <details className="mt-5 rounded-md border border-border/70">
+          <summary className="cursor-pointer px-3 py-3 text-xs font-medium text-foreground">
+            {t("settings.modelConfig.quick.advanced")}
+          </summary>
+          <div className="border-t border-border/70 px-3 pb-4">
+            <FeatureModelsBlock
+              newApiBaseUrl={customBaseUrl}
+              database={customDatabase}
+              channelTypesEnabled={Boolean(
+                config?.custom?.configured &&
+                config?.provisioner?.database?.available,
+              )}
+              savedProviderChannels={
+                config?.provisioner?.providerChannels ?? []
+              }
+              savedEmbeddingModel={config?.provisioner?.embeddingModel}
+              savedMediaModels={config?.provisioner?.mediaModels ?? {}}
+            />
+          </div>
+        </details>
       ) : null}
     </section>
   );
@@ -861,333 +780,6 @@ function AgentLlmPanel({
   );
 }
 
-function OfficialGatewayPanel({
-  config,
-  loading,
-  activateHybrid = false,
-}: {
-  config: ModelGatewayConfig | undefined;
-  loading: boolean;
-  activateHybrid?: boolean;
-}) {
-  const { t } = useTranslation();
-  const official = config?.official;
-  const enableOfficial = useEnableOfficial();
-  const enableHybrid = useEnableHybrid();
-  const saveOfficial = useSaveOfficialConfig();
-  const mediaCatalogQuery = useOfficialMediaCatalogStatus();
-  const saveMediaCatalogPreferences = useSaveOfficialMediaCatalogPreferences();
-  const checkMediaCatalog = useCheckOfficialMediaCatalog();
-  const automaticCatalogCheckStarted = useRef(false);
-
-  const [apiKey, setApiKey] = useState("");
-  const [revealKey, setRevealKey] = useState(false);
-  const apiKeyInputRef = useRef<HTMLInputElement>(null);
-  const savedApiKeyPreview = official?.configured ? official.apiKeyPreview : "";
-  const mediaCatalog = mediaCatalogQuery.data?.data;
-
-  const runMediaCatalogCheck = async (manual: boolean) => {
-    try {
-      const response = await checkMediaCatalog.mutateAsync();
-      if (!response.ok) {
-        if (manual) {
-          toast.error(
-            getResponseErrorMessage(
-              response,
-              t("settings.modelConfig.official.mediaCatalogCheckFailed"),
-            ),
-          );
-        }
-        return;
-      }
-      if (manual) {
-        toast.success(
-          t(
-            response.data.updated
-              ? "settings.modelConfig.official.mediaCatalogUpdated"
-              : "settings.modelConfig.official.mediaCatalogUpToDate",
-          ),
-        );
-      }
-    } catch (error) {
-      if (manual) {
-        toast.error(
-          await getRequestErrorMessage(
-            error,
-            t("settings.modelConfig.official.mediaCatalogCheckFailed"),
-          ),
-        );
-      }
-    }
-  };
-
-  useEffect(() => {
-    if (
-      automaticCatalogCheckStarted.current ||
-      !mediaCatalog?.autoUpdate ||
-      checkMediaCatalog.isPending
-    )
-      return;
-    automaticCatalogCheckStarted.current = true;
-    void runMediaCatalogCheck(false);
-  }, [mediaCatalog?.autoUpdate, checkMediaCatalog.isPending]);
-
-  const handleMediaCatalogAutoUpdate = async () => {
-    const next = !mediaCatalog?.autoUpdate;
-    try {
-      const response = await saveMediaCatalogPreferences.mutateAsync(next);
-      if (!response.ok) {
-        toast.error(
-          getResponseErrorMessage(
-            response,
-            t("settings.modelConfig.requestFailed"),
-          ),
-        );
-      }
-    } catch (error) {
-      toast.error(
-        await getRequestErrorMessage(
-          error,
-          t("settings.modelConfig.requestFailed"),
-        ),
-      );
-    }
-  };
-
-  const handleSave = async () => {
-    // Password managers may update the DOM without firing React's onChange.
-    const trimmedApiKey = (
-      apiKey ||
-      apiKeyInputRef.current?.value ||
-      ""
-    ).trim();
-    try {
-      if (!trimmedApiKey) {
-        if (!official?.configured) {
-          toast.error(t("settings.modelConfig.official.missingFields"));
-          return;
-        }
-        const response = await (
-          activateHybrid && config?.custom?.configured
-            ? enableHybrid
-            : enableOfficial
-        ).mutateAsync();
-        if (!response.ok) {
-          toast.error(
-            getResponseErrorMessage(
-              response,
-              t("settings.modelConfig.requestFailed"),
-            ),
-          );
-          return;
-        }
-        toast.success(t("settings.modelConfig.official.saved"));
-        return;
-      }
-      const response = await saveOfficial.mutateAsync({
-        newApiApiKey: trimmedApiKey,
-      });
-      if (!response.ok) {
-        toast.error(
-          getResponseErrorMessage(
-            response,
-            t("settings.modelConfig.requestFailed"),
-          ),
-        );
-        return;
-      }
-      if (activateHybrid && config?.custom?.configured) {
-        const hybridResponse = await enableHybrid.mutateAsync();
-        if (!hybridResponse.ok) {
-          toast.error(
-            getResponseErrorMessage(
-              hybridResponse,
-              t("settings.modelConfig.requestFailed"),
-            ),
-          );
-          return;
-        }
-      }
-      setApiKey("");
-      setRevealKey(false);
-      toast.success(t("settings.modelConfig.official.saved"));
-    } catch (error) {
-      toast.error(
-        await getRequestErrorMessage(
-          error,
-          t("settings.modelConfig.requestFailed"),
-        ),
-      );
-    }
-  };
-
-  return (
-    <div className="space-y-3">
-      <p className="text-xs leading-relaxed text-muted-foreground">
-        {t("settings.modelConfig.official.description")}{" "}
-        <a
-          href="https://relayclaw.cdnfg.com"
-          target="_blank"
-          rel="noreferrer"
-          className="text-primary underline-offset-4 hover:underline"
-        >
-          {t("settings.modelConfig.official.registerLink")}
-        </a>
-      </p>
-
-      <div className="rounded-md border border-border/70 px-3 py-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs font-medium text-foreground">
-              {t("settings.modelConfig.official.mediaCatalogTitle")}
-            </p>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              {mediaCatalog
-                ? t("settings.modelConfig.official.mediaCatalogStatus", {
-                    version: mediaCatalog.catalogVersion,
-                    count: mediaCatalog.modelCount,
-                    source: t(
-                      `settings.modelConfig.official.mediaCatalogSources.${mediaCatalog.source}`,
-                    ),
-                  })
-                : t("settings.modelConfig.loading")}
-            </p>
-          </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => void runMediaCatalogCheck(true)}
-            disabled={
-              mediaCatalogQuery.isLoading || checkMediaCatalog.isPending
-            }
-          >
-            <RotateCw
-              className={cn(
-                "size-3.5",
-                checkMediaCatalog.isPending && "animate-spin",
-              )}
-            />
-            {t("settings.modelConfig.official.mediaCatalogCheckNow")}
-          </Button>
-        </div>
-        <div className="mt-3 flex items-center justify-between gap-3 border-t border-border/60 pt-3">
-          <div>
-            <Label className="text-xs font-normal text-foreground">
-              {t("settings.modelConfig.official.mediaCatalogAutoUpdate")}
-            </Label>
-            <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-              {t("settings.modelConfig.official.mediaCatalogAutoUpdateHint")}
-            </p>
-          </div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={mediaCatalog?.autoUpdate ?? false}
-            aria-label={t(
-              "settings.modelConfig.official.mediaCatalogAutoUpdate",
-            )}
-            disabled={!mediaCatalog || saveMediaCatalogPreferences.isPending}
-            onClick={() => void handleMediaCatalogAutoUpdate()}
-            className={cn(
-              "relative h-5 w-9 shrink-0 rounded-full border transition-colors focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50",
-              mediaCatalog?.autoUpdate
-                ? "border-primary bg-primary"
-                : "border-input bg-muted",
-            )}
-          >
-            <span
-              className={cn(
-                "absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow-sm transition-transform",
-                mediaCatalog?.autoUpdate ? "translate-x-4" : "translate-x-0",
-              )}
-            />
-          </button>
-        </div>
-      </div>
-
-      <div className="space-y-2.5">
-        <div className="grid grid-cols-[120px_1fr] items-center gap-3">
-          <Label className="justify-start text-[11px] font-normal tracking-wide text-muted-foreground uppercase">
-            {t("settings.modelConfig.fields.apiKey")}
-          </Label>
-          <div className="relative">
-            <Input
-              ref={apiKeyInputRef}
-              name="relayclaw-official-api-key"
-              autoComplete="new-password"
-              data-1p-ignore="true"
-              data-lpignore="true"
-              type={revealKey ? "text" : "password"}
-              value={apiKey}
-              onChange={(e) => {
-                setApiKey(e.target.value);
-                if (!e.target.value) setRevealKey(false);
-              }}
-              placeholder={
-                savedApiKeyPreview
-                  ? t("settings.secretSavedPlaceholder", {
-                      preview: savedApiKeyPreview,
-                    })
-                  : "sk-..."
-              }
-              autoCapitalize="none"
-              spellCheck={false}
-              className={cn(
-                "h-9 rounded-md border-input/80 focus-visible:border-ring/70 focus-visible:ring-1 focus-visible:ring-ring/30",
-                apiKey ? "pr-9" : savedApiKeyPreview ? "pr-16" : "",
-              )}
-            />
-            {apiKey ? (
-              <button
-                type="button"
-                onClick={() => setRevealKey((r) => !r)}
-                aria-label={
-                  revealKey
-                    ? t("settings.mediaStorage.hideSecret")
-                    : t("settings.mediaStorage.showSecret")
-                }
-                className="absolute top-1/2 right-2 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
-              >
-                {revealKey ? (
-                  <EyeOff className="size-4" />
-                ) : (
-                  <Eye className="size-4" />
-                )}
-              </button>
-            ) : savedApiKeyPreview ? (
-              <span className="absolute top-1/2 right-2 -translate-y-1/2 rounded bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-400">
-                {t("settings.secretSavedBadge")}
-              </span>
-            ) : null}
-          </div>
-        </div>
-      </div>
-
-      <div className="flex justify-end">
-        <Button
-          type="button"
-          size="sm"
-          onClick={handleSave}
-          disabled={
-            loading ||
-            saveOfficial.isPending ||
-            enableOfficial.isPending ||
-            enableHybrid.isPending
-          }
-        >
-          {saveOfficial.isPending ||
-          enableOfficial.isPending ||
-          enableHybrid.isPending ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : null}
-          {t("settings.modelConfig.official.save")}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 function BrainClawGatewayPanel({
   config,
   loading,
@@ -1347,16 +939,13 @@ function CustomGatewayPanel({
   config,
   loading,
   baseUrl,
-  activateHybrid = false,
 }: {
   config: ModelGatewayConfig | undefined;
   loading: boolean;
   baseUrl: string;
-  activateHybrid?: boolean;
 }) {
   const { t } = useTranslation();
   const initCustom = useInitCustomNewApi();
-  const enableHybrid = useEnableHybrid();
   const [setupPassword, setSetupPassword] = useState("");
   const [setupConfirmPassword, setSetupConfirmPassword] = useState("");
   const [initError, setInitError] = useState("");
@@ -1435,18 +1024,6 @@ function CustomGatewayPanel({
             "settings.modelConfig.custom.setupAlreadyInitializedPasswordIgnored",
           ),
         );
-      }
-      if (activateHybrid && config?.official?.configured) {
-        const hybridResponse = await enableHybrid.mutateAsync();
-        if (!hybridResponse.ok) {
-          showInitResponseError(
-            getResponseErrorMessage(
-              hybridResponse,
-              t("settings.modelConfig.requestFailed"),
-            ),
-          );
-          return;
-        }
       }
       toast.success(t("settings.modelConfig.custom.initialized"));
     } catch (error) {
@@ -1644,196 +1221,6 @@ interface QuickModelProfile {
   embedding: QuickProfileModel & { dimension: number; batchSize: number };
   mediaModels: Record<string, QuickProfileModel>;
 }
-
-function comfyNode(classType: string, inputs: Record<string, unknown>) {
-  return { inputs, class_type: classType };
-}
-
-function minimaxH3Fl2vaWorkflow(firstFrame: boolean) {
-  const generationInputs: Record<string, unknown> = {
-    prompt: "",
-    width: ["115", 0],
-    height: ["115", 1],
-    length: ["105:107", 1],
-    clip: ["105:13", 0],
-    vae: ["105:11", 0],
-  };
-  if (firstFrame) generationInputs.first_frame = ["114", 0];
-  return {
-    "92": comfyNode("SaveVideo", {
-      filename_prefix: "video/MiniMax_H3",
-      format: "auto",
-      codec: "auto",
-      video: ["105:91", 0],
-    }),
-    ...(firstFrame
-      ? {
-          "114": comfyNode("LoadImage", {
-            image: "transparent_rgb_gaming_mouse.png",
-          }),
-          "119": comfyNode("ImageScaleToTotalPixels", {
-            upscale_method: "nearest-exact",
-            megapixels: 1,
-            resolution_steps: 32,
-          }),
-          "120": comfyNode("GetImageSize", { image: ["119", 0] }),
-        }
-      : {}),
-    "115": comfyNode("ResolutionSelector", {
-      aspect_ratio: firstFrame ? "1:1 (Square)" : "16:9 (Widescreen)",
-      megapixels: 0.4,
-      multiple: 32,
-    }),
-    "105:11": comfyNode("VAELoader", {
-      vae_name: "minimax_h3_video_vae_fp16.safetensors",
-    }),
-    "105:24": comfyNode("VAELoader", {
-      vae_name: "minimax_h3_audio_vae_fp32.safetensors",
-    }),
-    "105:23": comfyNode("VAEDecodeAudio", {
-      samples: ["105:14", 0],
-      vae: ["105:24", 0],
-    }),
-    "105:10": comfyNode("VAEDecode", {
-      samples: ["105:14", 0],
-      vae: ["105:11", 0],
-    }),
-    "105:17": comfyNode("KSamplerSelect", { sampler_name: "res_multistep" }),
-    "105:9": comfyNode("BasicScheduler", {
-      scheduler: "simple",
-      steps: 20,
-      denoise: 1,
-      model: ["105:6", 0],
-    }),
-    "105:14": comfyNode("SamplerCustomAdvanced", {
-      noise: ["105:15", 0],
-      guider: ["105:16", 0],
-      sampler: ["105:17", 0],
-      sigmas: ["105:9", 0],
-      latent_image: ["105:104", 1],
-    }),
-    "105:16": comfyNode("BasicGuider", {
-      model: ["105:6", 0],
-      conditioning: ["105:104", 0],
-    }),
-    "105:6": comfyNode("UNETLoader", {
-      unet_name: "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-      weight_dtype: "default",
-    }),
-    "105:13": comfyNode("CLIPLoader", {
-      clip_name: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
-      type: "minimax",
-      device: "default",
-    }),
-    "105:15": comfyNode("RandomNoise", {
-      noise_seed: firstFrame ? 168866841893410 : 556589502035082,
-    }),
-    "105:91": comfyNode("CreateVideo", {
-      fps: 24,
-      bit_depth: 8,
-      images: ["105:10", 0],
-      audio: ["105:23", 0],
-    }),
-    "105:104": comfyNode("MiniMaxH3ImageToVideo", generationInputs),
-    "105:107": comfyNode("ComfyMathExpression", {
-      expression:
-        "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
-      "values.a": ["105:111", 0],
-    }),
-    "105:111": comfyNode("PrimitiveFloat", { value: 5 }),
-  };
-}
-
-function minimaxH3ReferenceWorkflow() {
-  return {
-    "92": comfyNode("SaveVideo", {
-      filename_prefix: "video/MiniMax_H3",
-      format: "auto",
-      codec: "auto",
-      video: ["130", 0],
-    }),
-    "115": comfyNode("ResolutionSelector", {
-      aspect_ratio: "16:9 (Widescreen)",
-      megapixels: 0.4,
-      multiple: 32,
-    }),
-    "119": comfyNode("VAELoader", {
-      vae_name: "minimax_h3_video_vae_fp16.safetensors",
-    }),
-    "120": comfyNode("VAELoader", {
-      vae_name: "minimax_h3_audio_vae_fp32.safetensors",
-    }),
-    "121": comfyNode("VAEDecodeAudio", {
-      samples: ["125", 0],
-      vae: ["120", 0],
-    }),
-    "122": comfyNode("VAEDecode", { samples: ["125", 0], vae: ["119", 0] }),
-    "123": comfyNode("KSamplerSelect", { sampler_name: "res_multistep" }),
-    "124": comfyNode("BasicScheduler", {
-      scheduler: "simple",
-      steps: 20,
-      denoise: 1,
-      model: ["127", 0],
-    }),
-    "125": comfyNode("SamplerCustomAdvanced", {
-      noise: ["129", 0],
-      guider: ["126", 0],
-      sampler: ["123", 0],
-      sigmas: ["124", 0],
-      latent_image: ["136", 1],
-    }),
-    "126": comfyNode("BasicGuider", {
-      model: ["127", 0],
-      conditioning: ["136", 0],
-    }),
-    "127": comfyNode("UNETLoader", {
-      unet_name: "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
-      weight_dtype: "default",
-    }),
-    "128": comfyNode("CLIPLoader", {
-      clip_name: "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
-      type: "minimax",
-      device: "default",
-    }),
-    "129": comfyNode("RandomNoise", { noise_seed: 157368968253448 }),
-    "130": comfyNode("CreateVideo", {
-      fps: 24,
-      bit_depth: 8,
-      images: ["122", 0],
-      audio: ["121", 0],
-    }),
-    "131": comfyNode("ComfyMathExpression", {
-      expression:
-        "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17",
-      "values.a": ["132", 0],
-    }),
-    "132": comfyNode("PrimitiveFloat", { value: 5 }),
-    "136": comfyNode("MiniMaxH3ReferenceToVideo", {
-      prompt: ["138", 0],
-      width: ["115", 0],
-      height: ["115", 1],
-      length: ["131", 1],
-      ref_image_size: "match",
-      clip: ["128", 0],
-      vae: ["119", 0],
-      audio_vae: ["120", 0],
-      "ref_images.ref_image_0": ["137", 0],
-      "ref_images.ref_image_1": ["139", 0],
-    }),
-    "137": comfyNode("LoadImage", { image: "red_superboy_on_city_roof.png" }),
-    "138": comfyNode("PrimitiveStringMultiline", { value: "" }),
-    "139": comfyNode("LoadImage", { image: "mecha_dragon_lightning.png" }),
-  };
-}
-
-const HYBRID_COMFYUI_WORKFLOWS = {
-  model: "MiniMax-H3-local",
-  workflows: {
-    minimax_h3_t2v: minimaxH3Fl2vaWorkflow(false),
-    minimax_h3_i2v: minimaxH3Fl2vaWorkflow(true),
-    minimax_h3_r2v: minimaxH3ReferenceWorkflow(),
-  },
-};
 
 type ChannelCapability =
   | "text"
