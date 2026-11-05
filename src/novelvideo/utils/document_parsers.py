@@ -13,7 +13,10 @@ SUPPORTED_NOVEL_EXTENSION_ORDER = (".txt", ".md", ".docx")
 _BILLABLE_WHITESPACE_RE = re.compile(r"[\s\u3000]+")
 MAX_NOVEL_IMPORT_CHARS = 100_000
 # Storage/analysis-plan limit, not a claim about any model's context window.
-MAX_STRUCTURED_NOVEL_IMPORT_CHARS = 1_000_000
+#
+# 与 `upload_safety.MAX_STRUCTURED_NOVEL_BYTES` 成对调整：500 万汉字按 UTF-8
+# 约 15MB，字节上限必须覆盖它，否则请求在字数校验之前就被拒。
+MAX_STRUCTURED_NOVEL_IMPORT_CHARS = 5_000_000
 MAX_DOCX_EXPANDED_BYTES = 50 * 1024 * 1024
 
 

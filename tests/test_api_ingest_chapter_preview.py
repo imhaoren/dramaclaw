@@ -709,7 +709,9 @@ async def test_upload_novel_parse_failure_preserves_existing_same_name(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("body_chars", [159_901, 999_997])
+# 4_999_997 用于钉住 500 万字上限：既验证超旧上限（100 万）仍能导入，
+# 也顺带覆盖配套的 24MB 字节上限（汉字 UTF-8 下约 15MB）。
+@pytest.mark.parametrize("body_chars", [159_901, 999_997, 4_999_997])
 async def test_upload_novel_accepts_complete_long_novel(
     tmp_path, monkeypatch, body_chars
 ):
@@ -1210,9 +1212,9 @@ async def test_structured_import_limits_match_upload_and_start(
         ingest, "resolve_project_scope", _project_scope_resolver(tmp_path)
     )
     data = (
-        ("第一章\n" + "字" * 1_000_001).encode()
+        ("第一章\n" + "字" * 5_000_001).encode()
         if kind == "characters"
-        else b"x" * (8 * 1024 * 1024 + 1)
+        else b"x" * (24 * 1024 * 1024 + 1)
     )
     response = await ingest.upload_novel(
         project="demo",
@@ -1222,9 +1224,10 @@ async def test_structured_import_limits_match_upload_and_start(
     )
     expected_type = "text_too_large" if kind == "characters" else "file_too_large"
     expected_limit = (
-        {"limit_chars": 1_000_000, "actual_chars": 1_000_004}
+        # 换行被计费口径忽略，故 "第一章" 只贡献 3 字
+        {"limit_chars": 5_000_000, "actual_chars": 5_000_004}
         if kind == "characters"
-        else {"limit_bytes": 8 * 1024 * 1024}
+        else {"limit_bytes": 24 * 1024 * 1024}
     )
     assert response["error_type"] == expected_type
     assert response["data"] == expected_limit

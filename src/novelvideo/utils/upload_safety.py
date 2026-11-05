@@ -11,7 +11,10 @@ from typing import BinaryIO
 
 MAX_NOVEL_UPLOAD_BYTES = 512 * 1024
 MAX_NOVEL_IMPORT_BYTES = 1 * 1024 * 1024
-MAX_STRUCTURED_NOVEL_BYTES = 8 * 1024 * 1024
+# 24MB 对应结构化导入的 500 万字上限：汉字 UTF-8 占 3 字节，500 万字约 15MB，
+# 余量留给 BOM、换行与少量标记；docx 压缩后更小，展开后由
+# `document_parsers.MAX_DOCX_EXPANDED_BYTES`（50MB）单独把关。
+MAX_STRUCTURED_NOVEL_BYTES = 24 * 1024 * 1024
 MAX_PROJECT_UPLOAD_BYTES = 200 * 1024 * 1024
 
 
