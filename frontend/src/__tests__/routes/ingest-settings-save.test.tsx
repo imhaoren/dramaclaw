@@ -126,6 +126,8 @@ beforeAll(async () => {
             },
             sceneHeaders: {
               missing: "Premium drama scripts require scene headers.",
+              missingWarning:
+                "No scene headers detected; import is still allowed.",
               missingFix: "Add a scene header to every scene.",
               repairable: "Non-standard scene headers will be normalized.",
               repairableFix: "Scene metadata will be normalized.",
@@ -216,6 +218,7 @@ const mocks = vi.hoisted(() => ({
     | undefined,
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
+  toastInfo: vi.fn(),
   ingestTasks: [] as {
     task_type: string;
     episode: number;
@@ -363,8 +366,16 @@ vi.mock("@/lib/queries/tasks", () => ({
 }));
 
 vi.mock("@/hooks/use-task-stream", () => ({
-  useTaskStream: (options: { onError?: (error: string) => void }) => {
-    mocks.taskStreamOnError = options.onError ?? null;
+  useTaskStream: (options: {
+    onError?: (error: string) => void;
+    enabled?: boolean;
+  }) => {
+    // 页面上可能同时挂着多条任务流（导入自身、全书结构分析卡片）。只有
+    // enabled 的那条代表「当前任务」，禁用态的子卡片不应覆盖错误回调，
+    // 否则重试类用例拿到的是卡片的 onError，页面的 Retry 永远不会出现。
+    if (options.enabled !== false) {
+      mocks.taskStreamOnError = options.onError ?? null;
+    }
     return {
       status: "idle",
       progress: 0,
@@ -380,6 +391,7 @@ vi.mock("sonner", () => ({
   toast: {
     success: mocks.toastSuccess,
     error: mocks.toastError,
+    info: mocks.toastInfo,
   },
 }));
 
@@ -411,6 +423,7 @@ beforeEach(() => {
   mocks.chaptersData = undefined;
   mocks.toastSuccess.mockReset();
   mocks.toastError.mockReset();
+  mocks.toastInfo.mockReset();
   mocks.ingestTasks = [];
   mocks.ingestTasksFetchedAfterMount = true;
   mocks.taskStreamOnError = null;
@@ -1066,7 +1079,7 @@ describe("IngestPage settings save", () => {
     }
   });
 
-  it("blocks a headerless premium drama before starting ingest", async () => {
+  it("allows a headerless premium drama and warns that scenes are inferred", async () => {
     const user = userEvent.setup();
     mocks.uploadNovel.mockResolvedValue({
       ok: true,
@@ -1080,6 +1093,10 @@ describe("IngestPage settings save", () => {
           issues: [],
         },
       },
+    });
+    mocks.startIngest.mockResolvedValue({
+      ok: true,
+      data: { task_id: "task-1" },
     });
 
     const { container } = render(
@@ -1095,14 +1112,24 @@ describe("IngestPage settings save", () => {
       new File(["Chapter 1"], "novel.txt", { type: "text/plain" }),
     );
 
+    // 缺场景头只提示、不阻断：后端上传校验不要求场景头，asset_compiler 也会回退
+    // 到正文语义场景规划。前端此前把它提成 blocking，按钮点不动、导入请求发不
+    // 出去，页面永远停在「未导入」。
     expect(
-      screen.getByText("Premium drama scripts require scene headers."),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /start import/i })).toBeDisabled();
-    expect(mocks.startIngest).not.toHaveBeenCalled();
+      screen.getAllByText("No scene headers detected; import is still allowed.")
+        .length,
+    ).toBeGreaterThan(0);
+    const startButton = screen.getByRole("button", { name: /start import/i });
+    expect(startButton).toBeEnabled();
 
-    await user.click(screen.getByRole("option", { name: "Narrated" }));
-    expect(screen.getByRole("button", { name: /start import/i })).toBeEnabled();
+    await user.click(startButton);
+    await waitFor(() =>
+      expect(mocks.startIngest).toHaveBeenCalledWith({
+        filename: "novel.txt",
+        rebuild: true,
+        spine_template: "drama",
+      }),
+    );
   });
 
   it("does not let a blocking import check disable project settings save", async () => {

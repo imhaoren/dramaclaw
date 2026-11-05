@@ -15,6 +15,7 @@ export const TASK_TYPES = {
   BUILD_CHARACTERS: "build_characters",
   BUILD_SCENES: "build_scenes",
   INGEST_FAST: "ingest_fast",
+  ANALYZE_STORY: "analyze_story",
   BUILD_EPISODES: "build_episodes",
   CHARACTER_PORTRAIT: "character_portrait",
   IDENTITY_IMAGE: "identity_image",

@@ -2907,6 +2907,21 @@
     "listSeparator": "、",
     "processing": "处理中…"
   },
+  "story": {
+    "title": "全书结构分析",
+    "description": "让 AI 通读全文，产出主线、分卷和每卷大纲。",
+    "summary": "已划分 {{volumes}} 卷，覆盖 {{chapters}} 章",
+    "analyze": "AI 分析全书",
+    "reanalyze": "重新分析",
+    "analyzing": "正在分析…",
+    "completed": "全书结构分析完成",
+    "empty": "还没有分析过。分析后会在这里显示分卷与大纲。",
+    "mainline": "主线",
+    "volumeLabel": "第 {{index}} 卷",
+    "chapterRange": "第 {{start}}–{{end}} 章",
+    "foreshadowing": "伏笔",
+    "ask": "导入完成。要让 AI 通读全文、分析大纲并分卷吗？"
+  },
   "ingest": {
     "title": "虾料",
     "subtitle": "上传剧本，开启你的创意之旅",
@@ -3019,6 +3034,7 @@
     "sceneHeaders": {
       "missing": "没有识别到场景头，系统无法判断每个场景从哪里开始。",
       "missingFix": "请按上方示例编写：每集先写“第N集”，每个场景再单独写“场号 地点 时间 内/外”，然后依次填写人物、动作和对白。",
+      "missingWarning": "没有识别到场景头，仍可导入：场景边界会由 AI 从正文语义推断。",
       "repairable": "场景边界已识别，但有些场景头缺少时间、地点或内外景。仍可导入，系统会在场景规划时补齐。",
       "repairableFix": "请对照上方示例补齐场景头中的地点、时间或内外景；如果暂不修改，也可以继续导入。",
       "open": "查看 {{chapter}} 的分场正文",
@@ -3263,7 +3279,8 @@
       "freezone_image_to_3gs": "图片转世界",
       "freezone_image_vectorize": "生成矢量图",
       "freezone_image_animate_gif": "转换动态图 GIF",
-      "freezone_skill_import": "外部 Skill 转换"
+      "freezone_skill_import": "外部 Skill 转换",
+      "analyze_story": "分析全书结构"
     },
     "cancelRunning": {
       "title": "终止任务",

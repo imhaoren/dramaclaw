@@ -42,6 +42,7 @@ import {
 import { FormatCheckDetailsDialog } from "@/components/ingest/FormatCheckDetailsDialog";
 import { NovelFormatDialog } from "@/components/ingest/NovelFormatDialog";
 import { KnowledgeGraphVisualization } from "@/components/ingest/KnowledgeGraphVisualization";
+import { StoryStructureCard } from "@/components/story/story-structure-card";
 import { IngestElapsedTime } from "@/components/ingest/IngestElapsedTime";
 import { useStyles } from "@/lib/queries/styles";
 import { useCancelTask, useTasks } from "@/lib/queries/tasks";
@@ -328,10 +329,16 @@ function resolveFormatCheckForSpineTemplate(
       message: t("ingest.sceneHeaders.missing"),
       fix: t("ingest.sceneHeaders.missingFix"),
     });
+    // 缺场景头不再阻断导入。后端的上传校验本来就不要求场景头
+    // （build_import_format_check 的 require_scene_headers 默认 False，上传接口
+    // 只在这一项缺失时给出 ok），asset_compiler 识别不到场景头时也会回退到正文
+    // 语义场景规划；前端此前把它重新提成 blocking，结果按钮禁用、导入请求根本
+    // 发不出去，页面却一直停在「未导入」。这里定级为 warning：保留提示，但允许
+    // 继续导入。
     return {
       ...formatCheck,
-      level: "blocking",
-      summary: t("ingest.sceneHeaders.missing"),
+      level: "warning",
+      summary: t("ingest.sceneHeaders.missingWarning"),
       issues,
     };
   }
@@ -2105,6 +2112,14 @@ export function IngestPageContent({ project }: { project: string }) {
                       }
                     />
                   </div>
+
+                  {/* 全书结构分析：导入只保证原文落地，分卷/大纲要单独跑一次。
+                      preview_only 是「已上传、尚未导入」的预览态，此时 novel.txt
+                      还没落地，分析接口只会回「请先导入小说」，所以先不渲染。 */}
+                  <StoryStructureCard
+                    project={project}
+                    enabled={chapterCount > 0 && !isUploadOnlyPreview}
+                  />
 
                   {/* Script details */}
                   <div className={cn("overflow-hidden rounded-lg border p-4", INGEST_SURFACE_SUBTLE_CLASS)}>

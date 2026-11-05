@@ -2907,6 +2907,21 @@
     "listSeparator": ", ",
     "processing": "A processar…"
   },
+  "story": {
+    "title": "Estrutura da história",
+    "description": "Peça à IA para ler o texto completo e produzir a linha principal, os volumes e os resumos de cada volume.",
+    "summary": "{{volumes}} volumes cobrindo {{chapters}} capítulos",
+    "analyze": "Analisar história",
+    "reanalyze": "Analisar novamente",
+    "analyzing": "Analisando…",
+    "completed": "Análise da estrutura concluída",
+    "empty": "Ainda não analisado. Os volumes e resumos aparecerão aqui.",
+    "mainline": "Linha principal",
+    "volumeLabel": "Volume {{index}}",
+    "chapterRange": "Cap. {{start}}–{{end}}",
+    "foreshadowing": "Pistas",
+    "ask": "Importação concluída. Quer que a IA leia o texto completo, faça o esboço e divida em volumes?"
+  },
   "ingest": {
     "title": "Fonte da história",
     "subtitle": "Carregue um guião e inicie a sua jornada criativa.",
@@ -3019,6 +3034,7 @@
     "sceneHeaders": {
       "missing": "Não foi reconhecido nenhum cabeçalho de cena, pelo que o sistema não consegue determinar onde começa cada cena.",
       "missingFix": "Siga o exemplo acima: comece com “Episódio N” e, em seguida, dê a cada cena um cabeçalho separado com “número da cena, local, hora, INT/EXT” antes das personagens, ações e diálogo.",
+      "missingWarning": "Não foi reconhecido nenhum cabeçalho de cena. A importação continua permitida — os limites das cenas serão inferidos a partir do texto.",
       "repairable": "Os limites da cena foram reconhecidos, mas alguns cabeçalhos não têm hora, local ou valor INT/EXT. A importação ainda é permitida e os metadados em falta serão concluídos durante o planeamento da cena.",
       "repairableFix": "Utilize o exemplo acima para adicionar o local, a hora ou o valor INT/EXT em falta. Também pode continuar a importar sem editar a fonte.",
       "open": "Ver cenas de {{chapter}}",
@@ -3263,7 +3279,8 @@
       "freezone_image_to_3gs": "Da imagem para um mundo 3D",
       "freezone_image_vectorize": "Gerar imagem vetorial",
       "freezone_image_animate_gif": "Converter GIF animado",
-      "freezone_skill_import": "Conversão de competência externa"
+      "freezone_skill_import": "Conversão de competência externa",
+      "analyze_story": "Análise da estrutura"
     },
     "cancelRunning": {
       "title": "Parar tarefa",

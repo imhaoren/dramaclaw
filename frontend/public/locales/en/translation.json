@@ -2907,6 +2907,21 @@
     "listSeparator": ", ",
     "processing": "Processing…"
   },
+  "story": {
+    "title": "Story structure",
+    "description": "Have the AI read the whole novel and produce the mainline, volumes and per-volume outlines.",
+    "summary": "{{volumes}} volumes covering {{chapters}} chapters",
+    "analyze": "Analyze story",
+    "reanalyze": "Re-analyze",
+    "analyzing": "Analyzing…",
+    "completed": "Story structure analysis finished",
+    "empty": "Not analyzed yet. Volumes and outlines will appear here.",
+    "mainline": "Mainline",
+    "volumeLabel": "Volume {{index}}",
+    "chapterRange": "Ch. {{start}}–{{end}}",
+    "foreshadowing": "Foreshadowing",
+    "ask": "Import finished. Have the AI read the full text, outline it and split it into volumes?"
+  },
   "ingest": {
     "title": "Story Source",
     "subtitle": "Upload a script and start your creative journey.",
@@ -3019,6 +3034,7 @@
     "sceneHeaders": {
       "missing": "No scene headings were recognized, so the system cannot tell where each scene begins.",
       "missingFix": "Follow the example above: start with “Episode N”, then give every scene a separate “scene number, location, time, INT/EXT” heading before its characters, actions, and dialogue.",
+      "missingWarning": "No scene headings were recognized. Import is still allowed — scene boundaries will be inferred from the prose.",
       "repairable": "Scene boundaries were recognized, but some headings are missing a time, location, or INT/EXT value. Import is still allowed and the missing metadata will be completed during scene planning.",
       "repairableFix": "Use the example above to add the missing location, time, or INT/EXT value. You can also continue importing without editing the source.",
       "open": "View scenes for {{chapter}}",
@@ -3263,7 +3279,8 @@
       "freezone_image_to_3gs": "Image to 3D world",
       "freezone_image_vectorize": "Generate vector image",
       "freezone_image_animate_gif": "Convert animated GIF",
-      "freezone_skill_import": "External skill conversion"
+      "freezone_skill_import": "External skill conversion",
+      "analyze_story": "Story structure analysis"
     },
     "cancelRunning": {
       "title": "Stop task",

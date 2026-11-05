@@ -326,17 +326,46 @@ async def test_changing_the_text_starts_a_new_run(structured_project, tmp_path):
 
 
 async def test_novel_txt_is_not_written_when_import_fails(structured_project, tmp_path):
-    """novel.txt is the public success marker and must not survive a failure."""
+    """novel.txt is the public success marker and must not survive a failure.
+
+    场景头缺失不再算失败——下游 asset_compiler 会回退到正文语义场景规划，
+    所以这里改用空正文触发真正的失败路径，验证标志文件仍然不会被写出来。
+    """
     from novelvideo.structured_ingest import ingest_source_text_structured
 
     store, state_dir = structured_project
     novel = tmp_path / "script.txt"
-    novel.write_text("这是一段没有任何场景头的正文。\n", encoding="utf-8")
+    novel.write_text("   \n\n", encoding="utf-8")
 
     with pytest.raises(ValueError):
         await ingest_source_text_structured(store, str(novel), spine_template="drama")
 
     assert not (Path(store.project_dir) / "novel.txt").exists()
+
+
+async def test_drama_import_accepts_prose_without_scene_headers(
+    structured_project, tmp_path
+):
+    """精品剧允许导入没有场景头的纯散文。
+
+    「场景头」是后续 AI 改写的产物，不应该当成导入的前置条件；否则纯散文
+    永远进不来，而下游本来就能从正文推断场景边界。
+    """
+    from novelvideo.structured_ingest import ingest_source_text_structured
+
+    store, _ = structured_project
+    novel = tmp_path / "prose.txt"
+    novel.write_text(
+        "第一章 开端\n　　" + "正文内容。" * 200 + "\n\n"
+        "第二章 转折\n　　" + "正文内容。" * 200 + "\n",
+        encoding="utf-8",
+    )
+
+    result = await ingest_source_text_structured(
+        store, str(novel), spine_template="drama"
+    )
+    assert result["chunks"] >= 1
+    assert (Path(store.project_dir) / "novel.txt").exists()
 
 
 async def test_empty_upload_is_rejected(structured_project, tmp_path):

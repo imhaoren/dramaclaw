@@ -79,11 +79,19 @@ async def ingest_source_text_structured(
     )
 
     template = str(spine_template or "").strip()
+    # 精品剧不再要求原文自带场景头。下游 asset_compiler 在识别不到场景头时
+    # 会回退到正文语义场景规划，所以纯散文是可以跑通的，只是场景边界由 AI
+    # 从正文推断而不是原文给定。这里只留一条日志，方便排查质量差异。
     if template == "drama":
         from novelvideo.utils.screenplay_quality import assess_screenplay_scene_headers
 
         if assess_screenplay_scene_headers(content).status == "missing":
-            raise ValueError("精品剧必须包含场景头，请补充后重新导入")
+            log(
+                lmsg(
+                    "tasks.log.ingest.sceneHeadersMissing",
+                    "未识别到场景头，后续场景规划将从正文语义推断",
+                )
+            )
     report(
         _PROGRESS["validated"],
         lmsg("tasks.progress.ingest.validated", "原文校验完成"),

@@ -45,6 +45,7 @@ _TASK_TYPE_LABELS = {
     "build_scenes": "构建场景",
     "build_props": "构建道具",
     "build_episodes": "规划剧集",
+    "analyze_story": "分析全书结构",
     "identity_planner": "规划身份",
     "script_writer": "生成剧本",
     "beat_video_prompt": "生成提示词",

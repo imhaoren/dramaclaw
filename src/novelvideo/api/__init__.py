@@ -64,6 +64,7 @@ from novelvideo.api.routes import (  # noqa: E402
     release_notifications,
     scenes,
     scripts,
+    story,
     styles,
     tasks,
 )
@@ -110,6 +111,7 @@ api_router.include_router(assets.router, tags=["assets"])
 api_router.include_router(scenes.router, tags=["scenes"])
 api_router.include_router(props.router, tags=["props"])
 api_router.include_router(episodes.router, tags=["episodes"])
+api_router.include_router(story.router, tags=["story"])
 api_router.include_router(scripts.router, tags=["scripts"])
 api_router.include_router(content.router, tags=["content"])
 api_router.include_router(generation.router, tags=["generation"])

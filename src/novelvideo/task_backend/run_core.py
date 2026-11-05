@@ -741,6 +741,7 @@ def _ensure_builtin_runners_registered() -> None:
         sketch,
         sketch_edit_execute,
         stage_asset,
+        story_structure,
         video,
     )
 

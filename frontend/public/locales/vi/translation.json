@@ -2793,6 +2793,21 @@
     "generationContentPolicyBlocked": "Loại lỗi: không vượt qua kiểm duyệt an toàn nội dung. Mô hình đã từ chối yêu cầu tạo này. Hãy điều chỉnh câu lệnh hoặc thay đầu vào rồi thử lại.",
     "processing": "Đang xử lý…"
   },
+  "story": {
+    "title": "Cấu trúc truyện",
+    "description": "Để AI đọc toàn bộ truyện và tạo ra tuyến chính, các quyển và dàn ý từng quyển.",
+    "summary": "{{volumes}} quyển, bao gồm {{chapters}} chương",
+    "analyze": "Phân tích truyện",
+    "reanalyze": "Phân tích lại",
+    "analyzing": "Đang phân tích…",
+    "completed": "Đã phân tích xong cấu trúc truyện",
+    "empty": "Chưa phân tích. Các quyển và dàn ý sẽ hiển thị ở đây.",
+    "mainline": "Tuyến chính",
+    "volumeLabel": "Quyển {{index}}",
+    "chapterRange": "Chương {{start}}–{{end}}",
+    "foreshadowing": "Phục bút",
+    "ask": "Đã nhập xong. Bạn có muốn AI đọc toàn bộ, lập dàn ý và chia quyển không?"
+  },
   "ingest": {
     "title": "Nguồn truyện",
     "subtitle": "Tải kịch bản lên và bắt đầu hành trình sáng tạo.",
@@ -2905,6 +2920,7 @@
     "sceneHeaders": {
       "missing": "Không nhận diện được dòng đầu cảnh nào, nên hệ thống không biết mỗi cảnh bắt đầu từ đâu.",
       "missingFix": "Hãy làm theo ví dụ phía trên: mở đầu bằng “Episode N”, rồi đặt cho mỗi phân cảnh một tiêu đề riêng gồm số cảnh, địa điểm, thời gian và INT/EXT trước phần nhân vật, hành động và lời thoại. Giữ nguyên các từ khoá tiếng Anh/tiếng Trung trong ví dụ.",
+      "missingWarning": "Không nhận diện được dòng đầu cảnh nào. Vẫn có thể nhập — ranh giới phân cảnh sẽ do AI suy ra từ nội dung.",
       "repairable": "Đã nhận diện được ranh giới phân cảnh, nhưng một số tiêu đề thiếu thời gian, bối cảnh hoặc INT/EXT. Vẫn có thể nhập, phần metadata thiếu sẽ được bổ sung khi lên kế hoạch phân cảnh.",
       "repairableFix": "Dựa theo ví dụ phía trên để bổ sung địa điểm, thời gian hoặc INT/EXT còn thiếu. Bạn cũng có thể nhập tiếp mà không cần sửa file gốc.",
       "open": "Xem các phân cảnh của {{chapter}}",
@@ -3149,7 +3165,8 @@
       "freezone_workflow_confirm": "Xác nhận quy trình",
       "freezone_image_vectorize": "Tạo ảnh vector",
       "freezone_image_animate_gif": "Chuyển đổi ảnh GIF động",
-      "freezone_skill_import": "Chuyển đổi Skill bên ngoài"
+      "freezone_skill_import": "Chuyển đổi Skill bên ngoài",
+      "analyze_story": "Phân tích cấu trúc truyện"
     },
     "cancelRunning": {
       "title": "Dừng tác vụ",

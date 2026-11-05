@@ -384,13 +384,24 @@ async def start_ingest(
     )
     if effective_spine_template == "drama":
         preview = build_chapter_preview(content)
+        has_chapters = bool(preview.get("chapters"))
         format_check = build_import_format_check(
             content,
-            has_chapters=bool(preview.get("chapters")),
+            has_chapters=has_chapters,
             chapters=preview.get("chapters"),
             require_scene_headers=True,
         )
-        if format_check["level"] == "blocking":
+        # 「缺场景头」单独放行。下游 asset_compiler 在精品剧里识别不到场景头时，
+        # 本来就会回退到正文语义场景规划（_compile_narrated_scenes，日志写的是
+        # "已回退为正文语义场景规划；项目类型仍保持精品剧"）。上游硬拦和下游回退
+        # 互相矛盾：纯散文永远进不来，而进来之后其实跑得通——只是场景边界要靠
+        # AI 从正文推断。所以这一类降级为警告；无章节、空文本等其余 blocking
+        # 仍然拦截，那些是真的没法结构化。
+        scene_header_only = (
+            str(format_check.get("scene_header_status") or "") == "missing"
+            and has_chapters
+        )
+        if format_check["level"] == "blocking" and not scene_header_only:
             issue_codes = sorted(
                 {
                     str(issue.get("code") or "").strip()
@@ -421,6 +432,15 @@ async def start_ingest(
                 "error_type": "screenplay_format",
                 "format_check": format_check,
             }
+        if scene_header_only:
+            logger.info(
+                "screenplay_format_downgraded project=%s filename=%s "
+                "reason=missing_scene_headers chapters=%s",
+                project,
+                safe_name,
+                len(preview.get("chapters") or []),
+            )
+            format_check = {**format_check, "level": "warning"}
 
     config = {
         "rebuild": body.rebuild,
