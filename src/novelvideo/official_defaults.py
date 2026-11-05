@@ -47,6 +47,10 @@ DEFAULT_TEXT_MODEL_BY_ENV = {
 # official defaults: they are the stable model-mapping contract owned by a
 # user's local NewAPI installation.
 ADVANCED_TEXT_MODEL_BY_ENV = {
+    # 通用文本兜底：get_pydantic_model 这类老工厂没给具体任务路由时落到这里。
+    # 目前只有分集规划和全书结构分析在用，两者的活都是「读剧情、写结构」，
+    # 因此复用剧情规划别名，而不是另造一个需要用户重新同步渠道的新别名。
+    "MODEL_NAME": "DC-episode-scene-planner-LLM",
     "HERMES_MODEL": "DC-hermes-LLM",
     "GLOBAL_VIDEO_OPTIMIZER_MODEL": "DC-video-prompt-optimizer-LLM",
     "KEYFRAME_PROMPT_MODEL": "DC-video-prompt-optimizer-LLM",

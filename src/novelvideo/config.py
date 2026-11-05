@@ -117,11 +117,17 @@ def get_pydantic_model(
         )
 
     preset = PROVIDER_PRESETS[provider]
-    model_name = model_name_override or os.environ.get(
-        "MODEL_NAME", preset["default_model"]
-    )
+    # 只有调用方显式指定、或运维显式设了 MODEL_NAME 时才算「明确指定模型」。
+    # 此前这里无条件回落到 preset 的默认模型名（如 volcengine 的
+    # doubao-seed-1-6-251015）并当作 explicit override 传下去，把按版本解析
+    # 的环节整个短路了：CE 因此把真实厂商模型名发给本地 NewAPI，而本地网关的
+    # 渠道只认 DC-* 契约别名，于是所有走这条老工厂的调用（全书结构分析、
+    # 分集规划）都报 model_not_found。留空则交给 get_newapi_text_pydantic_model
+    # 分版本解析——CE Advanced 取 ADVANCED_TEXT_MODEL_BY_ENV 的别名，
+    # EE 继续用 preset 默认名。
+    model_name = model_name_override or _clean_env_value("MODEL_NAME")
 
-    if provider == "openrouter" and model_name.startswith("openrouter/"):
+    if model_name and provider == "openrouter" and model_name.startswith("openrouter/"):
         model_name = model_name[len("openrouter/") :]
 
     return get_newapi_text_pydantic_model(
