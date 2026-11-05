@@ -1,12 +1,14 @@
 """分集列表 & 规划 & 身份端点。"""
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
 from typing import Literal
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import PlainTextResponse
 from starlette.concurrency import run_in_threadpool
 
 from novelvideo.api.auth import get_api_user
@@ -292,6 +294,70 @@ async def list_episodes(project: str, user: dict = Depends(get_api_user)):
     return {"ok": True, "data": data}
 
 
+@router.get("/projects/{project}/episodes/export")
+async def export_episodes(
+    project: str,
+    format: Literal["json", "markdown"] = "markdown",
+    user: dict = Depends(get_api_user),
+):
+    """导出分集方案（章节边界 + 摘要 + 冲突 + 钩子）。"""
+    resolved = await resolve_project_scope(project, user, required_role="viewer")
+    store_scope = (
+        sqlite_store_for_context_scope(resolved.ctx)
+        if resolved.ctx
+        else sqlite_store_scope(resolved.username, resolved.project_name)
+    )
+    async with store_scope as store:
+        episodes = store.get_all_episodes()
+
+    if format == "json":
+        payload = [
+            {
+                "number": getattr(ep, "number", index + 1),
+                "title": getattr(ep, "title", "") or "",
+                "chapter_start": getattr(ep, "chapter_start", 0),
+                "chapter_end": getattr(ep, "chapter_end", 0),
+                "content_summary": getattr(ep, "content_summary", "") or "",
+                "main_conflict": getattr(ep, "main_conflict", "") or "",
+                "cliffhanger": getattr(ep, "cliffhanger", "") or "",
+                "key_events": list(getattr(ep, "key_events", []) or []),
+                "character_names": list(getattr(ep, "character_names", []) or []),
+            }
+            for index, ep in enumerate(episodes)
+        ]
+        content = json.dumps(payload, ensure_ascii=False, indent=2)
+        media_type = "application/json"
+        filename = f"{resolved.project_name}-episodes.json"
+    else:
+        lines = [
+            "# 分集方案",
+            "",
+            "| 集 | 标题 | 章节 | 核心冲突 | 钩子 | 摘要 |",
+            "| --- | --- | --- | --- | --- | --- |",
+        ]
+        for index, ep in enumerate(episodes, start=1):
+            def _cell(value: object) -> str:
+                return str(value or "").replace("|", "｜").replace("\n", " ")
+
+            number = getattr(ep, "number", index)
+            lines.append(
+                f"| {number} | {_cell(getattr(ep, 'title', ''))} | "
+                f"{getattr(ep, 'chapter_start', 0)}–{getattr(ep, 'chapter_end', 0)} | "
+                f"{_cell(getattr(ep, 'main_conflict', ''))} | "
+                f"{_cell(getattr(ep, 'cliffhanger', ''))} | "
+                f"{_cell(getattr(ep, 'content_summary', ''))} |"
+            )
+        content = "\n".join(lines) + "\n"
+        media_type = "text/markdown; charset=utf-8"
+        filename = f"{resolved.project_name}-episodes.md"
+
+    return PlainTextResponse(
+        content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/projects/{project}/episodes/plan")
 async def plan_episodes(project: str, body: EpisodePlanRequest, user: dict = Depends(get_api_user)):
     """规划分集。"""
@@ -310,19 +376,45 @@ async def plan_episodes(project: str, body: EpisodePlanRequest, user: dict = Dep
         "target_episodes": body.target_episodes,
         "planning_mode": body.planning_mode,
     }
+    if body.chars_per_episode:
+        config["chars_per_episode"] = body.chars_per_episode
+    if body.episode_counts:
+        config["episode_counts"] = body.episode_counts
 
     if ctx is not None:
         if not has_imported_novel(resolved.project_dir):
             return novel_import_required_response()
         # The AI planners read the Cognee graph, which structured_v1 projects do
-        # not have. Reject before enqueue so the user gets an answer instead of
-        # a task that is guaranteed to fail after reserving credit.
-        if is_structured_pipeline(state_dir) and body.planning_mode != "chapters":
+        # not have. Structured projects additionally support volume-aware
+        # planning from the stored StoryStructure. Reject the rest before enqueue
+        # so the user gets an answer instead of a task that is guaranteed to
+        # fail after reserving credit.
+        structured = is_structured_pipeline(state_dir)
+        if structured and body.planning_mode not in ("chapters", "volumes"):
             return {
                 "ok": False,
                 "code": KnowledgePipelineUnsupported.error_code,
-                "error": "该项目只支持按章节/集号的确定性分集",
+                "error": "该项目只支持按章节映射或按卷规划分集",
             }
+        if structured and body.planning_mode == "volumes":
+            from novelvideo.novel_source import load_imported_novel_content
+            from novelvideo.story_structure import resolve_story_structure_run
+
+            store_scope = (
+                sqlite_store_for_context_scope(ctx)
+                if ctx
+                else sqlite_store_scope(resolved.username, resolved.project_name)
+            )
+            async with store_scope as store:
+                _, structure = await resolve_story_structure_run(
+                    store, load_imported_novel_content(resolved.project_dir) or ""
+                )
+            if not structure:
+                return {
+                    "ok": False,
+                    "code": "STORY_STRUCTURE_NOT_FOUND",
+                    "error": "请先生成全书结构，再按卷规划分集",
+                }
         queued = await get_task_backend().enqueue_project_task(
             ctx,
             product_surface="mainline",

@@ -1,15 +1,36 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Loader2, Sparkles, ChevronDown, BookOpen } from "lucide-react";
+import {
+  BookOpen,
+  Check,
+  ChevronDown,
+  Download,
+  Layers,
+  Loader2,
+  Pencil,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { queryKeys } from "@/lib/query-keys";
-import { useStoryStructure, useAnalyzeStory } from "@/lib/queries/story";
+import {
+  useStoryStructure,
+  useAnalyzeStory,
+  useUpdateStoryStructure,
+  type StoryAnalysisParams,
+  type StoryVolume,
+} from "@/lib/queries/story";
+import { usePlanEpisodes } from "@/lib/queries/episodes";
+import { useTasks } from "@/lib/queries/tasks";
 import { useTaskStream } from "@/hooks/use-task-stream";
 import { backendErrorToastMessage } from "@/lib/api-errors";
+import { downloadUrlAsFile } from "@/lib/browserDownload";
+import { p } from "@/lib/api-path";
 
 interface StoryStructureCardProps {
   project: string;
@@ -17,32 +38,60 @@ interface StoryStructureCardProps {
   enabled: boolean;
 }
 
+const ACTIVE_TASK_STATUSES = new Set([
+  "submitting",
+  "queued",
+  "pending",
+  "starting",
+  "running",
+]);
+
 /**
  * 全书结构分析卡片。
  *
- * 导入只保证原文落地；「这本书讲什么、能怎么分卷」要额外跑一次长任务
- * （几百章约几十次模型调用），所以按需触发而不是导入即跑。已有结果时
- * 直接展示；重跑会复用已摘要的章节，不会为同样的正文再付一次钱。
- *
- * 导入完成后会主动问一次（toast 带「开始分析」），但不自动开跑——用户
- * 可能只是试导入，自动花掉几十次调用不合适。
+ * 导入完成后自动入队一次结构分析：章节摘要 → 分卷 → 卷大纲（可选同时
+ * 规划分集）。任务进度走任务流实时展示；结果可逐卷展开、人工修正并导出。
  */
 export function StoryStructureCard({ project, enabled }: StoryStructureCardProps) {
   const { t } = useTranslation();
   const [started, setStarted] = useState(false);
+  const [planningStarted, setPlanningStarted] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
-  const askedRef = useRef(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<StoryVolume[] | null>(null);
+  const [targetEpisodes, setTargetEpisodes] = useState(12);
+  const autoStartedRef = useRef(false);
 
   const structureQuery = useStoryStructure(project, enabled);
+  const tasksQuery = useTasks({ project, episode: 0 });
   const analyze = useAnalyzeStory(project);
+  const updateStructure = useUpdateStoryStructure(project);
+  const planEpisodes = usePlanEpisodes(project);
 
-  const stream = useTaskStream({
+  const structure = structureQuery.data ?? null;
+  const structureVolumes = structure?.volumes ?? [];
+  const episodePlan = structure?.episode_plan ?? [];
+
+  const analyzeRunning = Boolean(
+    tasksQuery.data?.data.some(
+      (task) =>
+        task.task_type === "analyze_story" && ACTIVE_TASK_STATUSES.has(task.status),
+    ),
+  );
+  const planRunning = Boolean(
+    tasksQuery.data?.data.some(
+      (task) =>
+        task.task_type === "build_episodes" && ACTIVE_TASK_STATUSES.has(task.status),
+    ),
+  );
+
+  const analyzeStream = useTaskStream({
     taskType: "analyze_story",
     project,
     episode: 0,
-    enabled: started,
+    enabled: started || analyzeRunning,
     showCompleteToast: false,
-    invalidateKeys: [queryKeys.storyStructure(project)],
+    invalidateKeys: [queryKeys.storyStructure(project), queryKeys.tasks(project)],
     onComplete: () => {
       setStarted(false);
       toast.success(t("story.completed"));
@@ -53,33 +102,155 @@ export function StoryStructureCard({ project, enabled }: StoryStructureCardProps
     },
   });
 
-  const handleAnalyze = useCallback(() => {
-    if (started || analyze.isPending) return;
-    analyze.mutate(
-      { reuse: true },
-      {
+  const planStream = useTaskStream({
+    taskType: "build_episodes",
+    project,
+    episode: 0,
+    enabled: planningStarted || planRunning,
+    showCompleteToast: false,
+    invalidateKeys: [
+      queryKeys.storyStructure(project),
+      queryKeys.episodes(project),
+      queryKeys.tasks(project),
+    ],
+    onComplete: () => {
+      setPlanningStarted(false);
+      toast.success(t("story.episodesCompleted"));
+    },
+    onError: (error) => {
+      setPlanningStarted(false);
+      toast.error(error);
+    },
+  });
+
+  const handleAnalyze = useCallback(
+    (options?: StoryAnalysisParams) => {
+      if (started || analyze.isPending || analyzeRunning) return;
+      analyze.mutate(options ?? { reuse: true }, {
         onSuccess: () => setStarted(true),
+        onError: (error) => toast.error(backendErrorToastMessage(error, t)),
+      });
+    },
+    [analyze, started, analyzeRunning, t],
+  );
+
+  // 导入完成且还没有结构结果时自动开始分析。同一浏览器会话只自动触发一次，
+  // 避免每次刷新都重新扣费；任务已在跑时直接挂上进度流，不重复入队。
+  useEffect(() => {
+    if (!enabled || autoStartedRef.current) return;
+    if (!structureQuery.isFetched || structureQuery.data) return;
+    if (!tasksQuery.isFetched) return;
+    autoStartedRef.current = true;
+    if (analyzeRunning) {
+      setStarted(true);
+      return;
+    }
+    toast.info(t("story.autoStarted"));
+    // 自动跑完整链路：解析 → 分卷/大纲 → 按卷分集。
+    handleAnalyze({
+      reuse: true,
+      plan_episodes: true,
+      target_episodes: targetEpisodes,
+    });
+  }, [
+    enabled,
+    structureQuery.isFetched,
+    structureQuery.data,
+    tasksQuery.isFetched,
+    analyzeRunning,
+    handleAnalyze,
+    t,
+  ]);
+
+  const handlePlanEpisodes = useCallback(() => {
+    if (planningStarted || planEpisodes.isPending || planRunning) return;
+    planEpisodes.mutate(
+      {
+        planning_mode: "volumes",
+        target_episodes: Math.max(1, targetEpisodes),
+      },
+      {
+        onSuccess: () => setPlanningStarted(true),
         onError: (error) => toast.error(backendErrorToastMessage(error, t)),
       },
     );
-  }, [analyze, started, t]);
+  }, [planningStarted, planEpisodes, planRunning, targetEpisodes, t]);
 
-  // 导入完成、还没有分析结果时问一次。askedRef 保证同一页面会话只问一次，
-  // 否则每次重新取数都会再弹一遍。
-  useEffect(() => {
-    if (!enabled || askedRef.current) return;
-    if (!structureQuery.isFetched || structureQuery.data) return;
-    askedRef.current = true;
-    toast.info(t("story.ask"), {
-      duration: 12000,
-      action: { label: t("story.analyze"), onClick: handleAnalyze },
-    });
-  }, [enabled, structureQuery.isFetched, structureQuery.data, handleAnalyze, t]);
+  const beginEdit = useCallback(() => {
+    setDraft(structuredClone(structureVolumes));
+    setEditing(true);
+  }, [structureVolumes]);
+
+  const cancelEdit = useCallback(() => {
+    setDraft(null);
+    setEditing(false);
+  }, []);
+
+  const saveEdit = useCallback(() => {
+    if (!draft) return;
+    updateStructure.mutate(
+      { volumes: draft, logline: structure?.logline, mainline: structure?.mainline },
+      {
+        onSuccess: () => {
+          setEditing(false);
+          setDraft(null);
+          toast.success(t("story.editSaved"));
+        },
+        onError: (error) => toast.error(backendErrorToastMessage(error, t)),
+      },
+    );
+  }, [draft, updateStructure, structure, t]);
+
+  const updateDraftVolume = useCallback(
+    (index: number, patch: Partial<StoryVolume>) => {
+      setDraft((current) =>
+        current
+          ? current.map((volume) =>
+              volume.index === index ? { ...volume, ...patch } : volume,
+            )
+          : current,
+      );
+    },
+    [],
+  );
+
+  const exportStructure = useCallback(() => {
+    downloadUrlAsFile(
+      `${p`api/v1/projects/${project}/story/structure/export`}?format=markdown`,
+      `${project}-story-structure.md`,
+    ).catch(() => toast.error(t("story.exportFailed")));
+  }, [project, t]);
+
+  const exportEpisodes = useCallback(() => {
+    downloadUrlAsFile(
+      `${p`api/v1/projects/${project}/episodes/export`}?format=markdown`,
+      `${project}-episodes.md`,
+    ).catch(() => toast.error(t("story.exportFailed")));
+  }, [project, t]);
+
+  const episodesByVolume = useMemo(() => {
+    const grouped = new Map<number, typeof episodePlan>();
+    for (const episode of episodePlan) {
+      for (const volume of structureVolumes) {
+        if (
+          episode.chapter_start <= volume.chapter_end &&
+          episode.chapter_end >= volume.chapter_start
+        ) {
+          const list = grouped.get(volume.index) ?? [];
+          list.push(episode);
+          grouped.set(volume.index, list);
+        }
+      }
+    }
+    return grouped;
+  }, [episodePlan, structureVolumes]);
 
   if (!enabled) return null;
 
-  const structure = structureQuery.data ?? null;
-  const running = started;
+  const running = started || analyzeRunning;
+  const planning = planningStarted || planRunning;
+  const progress = running ? analyzeStream.progress : planStream.progress;
+  const currentTask = running ? analyzeStream.currentTask : planStream.currentTask;
 
   return (
     <div className="rounded-lg border border-violet-300/12 bg-violet-500/[0.035] p-4">
@@ -90,35 +261,73 @@ export function StoryStructureCard({ project, enabled }: StoryStructureCardProps
             <p className="text-sm font-medium text-foreground">{t("story.title")}</p>
             <p className="mt-1 text-xs text-muted-foreground">
               {structure
-                ? t("story.summary", {
+                ? t("story.summaryWithEpisodes", {
                     volumes: structure.volumes.length,
                     chapters: structure.total_chapters,
+                    episodes: episodePlan.length,
                   })
                 : t("story.description")}
             </p>
           </div>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={running || analyze.isPending}
-          onClick={handleAnalyze}
-        >
-          {running || analyze.isPending ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <BookOpen className="size-3.5" />
+        <div className="flex flex-wrap items-center gap-2">
+          {structure && (
+            <>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={exportStructure}
+                aria-label={t("story.exportStructure")}
+              >
+                <Download className="size-3.5" />
+                {t("story.exportStructure")}
+              </Button>
+              {episodePlan.length > 0 && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={exportEpisodes}
+                >
+                  <Download className="size-3.5" />
+                  {t("story.exportEpisodes")}
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={editing ? cancelEdit : beginEdit}
+                disabled={running || planning}
+              >
+                {editing ? <X className="size-3.5" /> : <Pencil className="size-3.5" />}
+                {editing ? t("story.cancelEdit") : t("story.editVolumes")}
+              </Button>
+            </>
           )}
-          {structure ? t("story.reanalyze") : t("story.analyze")}
-        </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={running || planning || analyze.isPending}
+            onClick={() => handleAnalyze({ reuse: true })}
+          >
+            {running ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <BookOpen className="size-3.5" />
+            )}
+            {structure ? t("story.reanalyze") : t("story.analyze")}
+          </Button>
+        </div>
       </div>
 
-      {running && (
+      {(running || planning) && (
         <div className="mt-3 space-y-1.5">
-          <Progress value={Math.round((stream.progress || 0) * 100)} />
+          <Progress value={Math.round((progress || 0) * 100)} />
           <p className="text-xs text-muted-foreground">
-            {stream.currentTask || t("story.analyzing")}
+            {currentTask || (planning ? t("story.planning") : t("story.analyzing"))}
           </p>
         </div>
       )}
@@ -138,70 +347,242 @@ export function StoryStructureCard({ project, enabled }: StoryStructureCardProps
               </p>
             </div>
           )}
+          {structure.characters?.length > 0 && (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">
+                {t("story.characters")}
+              </p>
+              <p className="mt-1 text-sm leading-relaxed text-foreground/80">
+                {structure.characters.join("、")}
+              </p>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 rounded-md border border-white/[0.06] bg-white/[0.02] px-3 py-2">
+            <Layers className="size-3.5 text-violet-300" />
+            <span className="text-xs text-muted-foreground">
+              {t("story.episodePlanLabel", { count: episodePlan.length })}
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              <Input
+                type="number"
+                min={1}
+                max={2000}
+                value={targetEpisodes}
+                onChange={(event) =>
+                  setTargetEpisodes(Math.max(1, Number(event.target.value) || 1))
+                }
+                className="h-7 w-20 text-xs"
+                aria-label={t("story.targetEpisodes")}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={planning || running || planEpisodes.isPending}
+                onClick={handlePlanEpisodes}
+              >
+                {planning ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Layers className="size-3.5" />
+                )}
+                {episodePlan.length > 0
+                  ? t("story.replanEpisodes")
+                  : t("story.planEpisodes")}
+              </Button>
+            </div>
+          </div>
 
           <div className="space-y-1.5">
-            {structure.volumes.map((volume) => {
-              const isOpen = expanded === volume.index;
+            {(editing ? draft ?? [] : structureVolumes).map((volume) => {
+              const isOpen = expanded === volume.index && !editing;
+              const episodes = episodesByVolume.get(volume.index) ?? [];
               return (
                 <div
                   key={volume.index}
                   className="rounded-md border border-white/[0.06] bg-white/[0.02]"
                 >
-                  <button
-                    type="button"
-                    onClick={() => setExpanded(isOpen ? null : volume.index)}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left"
-                  >
-                    <ChevronDown
-                      className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${
-                        isOpen ? "" : "-rotate-90"
-                      }`}
-                    />
-                    <span className="text-sm font-medium text-foreground">
-                      {t("story.volumeLabel", { index: volume.index })}
-                      {volume.title ? ` · ${volume.title}` : ""}
-                    </span>
-                    <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-                      {t("story.chapterRange", {
-                        start: volume.chapter_start,
-                        end: volume.chapter_end,
-                      })}
-                    </span>
-                  </button>
-                  {isOpen && (
-                    <div className="space-y-2 border-t border-white/[0.06] px-3 py-2">
-                      {volume.stage && (
-                        <p className="text-xs text-muted-foreground">{volume.stage}</p>
-                      )}
-                      {volume.core_conflict && (
-                        <p className="text-sm text-foreground/85">
-                          {volume.core_conflict}
-                        </p>
-                      )}
-                      {volume.outline && (
-                        <p className="text-sm leading-relaxed text-foreground/75">
-                          {volume.outline}
-                        </p>
-                      )}
-                      {volume.key_events.length > 0 && (
-                        <ul className="list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
-                          {volume.key_events.map((event, i) => (
-                            <li key={i}>{event}</li>
-                          ))}
-                        </ul>
-                      )}
-                      {volume.foreshadowing.length > 0 && (
-                        <div className="text-xs text-muted-foreground">
-                          <span className="font-medium">{t("story.foreshadowing")}：</span>
-                          {volume.foreshadowing.join("；")}
+                  {editing ? (
+                    <div className="space-y-2 px-3 py-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {t("story.volumeLabel", { index: volume.index })}
+                        </span>
+                        <Input
+                          value={volume.title}
+                          onChange={(event) =>
+                            updateDraftVolume(volume.index, { title: event.target.value })
+                          }
+                          className="h-7 flex-1 text-xs"
+                          placeholder={t("story.volumeTitle")}
+                        />
+                        <Input
+                          type="number"
+                          value={volume.chapter_start}
+                          onChange={(event) =>
+                            updateDraftVolume(volume.index, {
+                              chapter_start: Number(event.target.value),
+                            })
+                          }
+                          className="h-7 w-20 text-xs"
+                          aria-label={t("story.chapterStart")}
+                        />
+                        <span className="text-xs text-muted-foreground">–</span>
+                        <Input
+                          type="number"
+                          value={volume.chapter_end}
+                          onChange={(event) =>
+                            updateDraftVolume(volume.index, {
+                              chapter_end: Number(event.target.value),
+                            })
+                          }
+                          className="h-7 w-20 text-xs"
+                          aria-label={t("story.chapterEnd")}
+                        />
+                      </div>
+                      <Input
+                        value={volume.stage}
+                        onChange={(event) =>
+                          updateDraftVolume(volume.index, { stage: event.target.value })
+                        }
+                        className="h-7 text-xs"
+                        placeholder={t("story.stage")}
+                      />
+                      <Input
+                        value={volume.core_conflict}
+                        onChange={(event) =>
+                          updateDraftVolume(volume.index, {
+                            core_conflict: event.target.value,
+                          })
+                        }
+                        className="h-7 text-xs"
+                        placeholder={t("story.coreConflict")}
+                      />
+                      <textarea
+                        value={volume.outline}
+                        onChange={(event) =>
+                          updateDraftVolume(volume.index, { outline: event.target.value })
+                        }
+                        className="min-h-20 w-full rounded-md border border-white/10 bg-transparent px-2 py-1.5 text-xs text-foreground outline-none focus:border-violet-300/40"
+                        placeholder={t("story.outline")}
+                      />
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setExpanded(isOpen ? null : volume.index)}
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left"
+                      >
+                        <ChevronDown
+                          className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${
+                            isOpen ? "" : "-rotate-90"
+                          }`}
+                        />
+                        <span className="text-sm font-medium text-foreground">
+                          {t("story.volumeLabel", { index: volume.index })}
+                          {volume.title ? ` · ${volume.title}` : ""}
+                        </span>
+                        {episodes.length > 0 && (
+                          <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] text-violet-200">
+                            {t("story.episodeCount", { count: episodes.length })}
+                          </span>
+                        )}
+                        <span className="ml-auto shrink-0 text-xs text-muted-foreground">
+                          {t("story.chapterRange", {
+                            start: volume.chapter_start,
+                            end: volume.chapter_end,
+                          })}
+                        </span>
+                      </button>
+                      {isOpen && (
+                        <div className="space-y-2 border-t border-white/[0.06] px-3 py-2">
+                          {volume.stage && (
+                            <p className="text-xs text-muted-foreground">{volume.stage}</p>
+                          )}
+                          {volume.core_conflict && (
+                            <p className="text-sm text-foreground/85">
+                              {volume.core_conflict}
+                            </p>
+                          )}
+                          {volume.outline && (
+                            <p className="text-sm leading-relaxed text-foreground/75">
+                              {volume.outline}
+                            </p>
+                          )}
+                          {volume.key_events.length > 0 && (
+                            <ul className="list-disc space-y-0.5 pl-4 text-xs text-muted-foreground">
+                              {volume.key_events.map((event, i) => (
+                                <li key={i}>{event}</li>
+                              ))}
+                            </ul>
+                          )}
+                          {volume.foreshadowing.length > 0 && (
+                            <div className="text-xs text-muted-foreground">
+                              <span className="font-medium">
+                                {t("story.foreshadowing")}：
+                              </span>
+                              {volume.foreshadowing.join("；")}
+                            </div>
+                          )}
+                          {episodes.length > 0 && (
+                            <div className="space-y-1 border-t border-white/[0.06] pt-2">
+                              <p className="text-xs font-medium text-muted-foreground">
+                                {t("story.volumeEpisodes")}
+                              </p>
+                              {episodes.map((episode, i) => (
+                                <div
+                                  key={`${episode.chapter_start}-${episode.chapter_end}-${i}`}
+                                  className="rounded border border-white/[0.04] px-2 py-1.5"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-medium text-foreground">
+                                      {episode.title || t("story.untitledEpisode")}
+                                    </span>
+                                    <span className="ml-auto text-[10px] text-muted-foreground">
+                                      {t("story.chapterRange", {
+                                        start: episode.chapter_start,
+                                        end: episode.chapter_end,
+                                      })}
+                                    </span>
+                                  </div>
+                                  {(episode.content_summary || episode.main_conflict) && (
+                                    <p className="mt-0.5 text-[11px] leading-relaxed text-foreground/70">
+                                      {episode.content_summary || episode.main_conflict}
+                                    </p>
+                                  )}
+                                  {episode.cliffhanger && (
+                                    <p className="mt-0.5 text-[11px] text-amber-200/80">
+                                      {t("story.cliffhanger")}：{episode.cliffhanger}
+                                    </p>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
                       )}
-                    </div>
+                    </>
                   )}
                 </div>
               );
             })}
           </div>
+
+          {editing && (
+            <div className="flex items-center gap-2">
+              <Button type="button" size="sm" onClick={saveEdit} disabled={updateStructure.isPending}>
+                {updateStructure.isPending ? (
+                  <Loader2 className="size-3.5 animate-spin" />
+                ) : (
+                  <Check className="size-3.5" />
+                )}
+                {t("story.saveEdit")}
+              </Button>
+              <p className="text-xs text-muted-foreground">{t("story.editHint")}</p>
+            </div>
+          )}
         </div>
       )}
 

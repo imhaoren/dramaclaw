@@ -126,6 +126,10 @@ def _build_scene_block_preview(
 def build_chapter_preview(
     novel_text: str, *, include_scene_blocks: bool = False
 ) -> dict:
+    # Windows / 老式 Mac 换行先归一化，否则章节检测按 "\n" 切分会把整本书
+    # 当成一章。只影响本次解析，不改写磁盘上的原文。
+    if "\r" in novel_text:
+        novel_text = novel_text.replace("\r\n", "\n").replace("\r", "\n")
     detector = ChapterDetector()
     chapters = detector.detect(novel_text)
 

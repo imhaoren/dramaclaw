@@ -201,9 +201,9 @@ async def _run_build_episodes(
     # before enqueue, but a task queued before the project's track was known
     # must not reach a planner that needs the graph.
     state_dir = getattr(ctx, "state_dir", ctx.output_dir)
-    if is_structured_pipeline(state_dir) and planning_mode != "chapters":
+    if is_structured_pipeline(state_dir) and planning_mode not in ("chapters", "volumes"):
         raise KnowledgePipelineUnsupported(
-            "structured_v1 only supports deterministic chapter/episode mapping"
+            "structured_v1 only supports chapter mapping or volume-based planning"
         )
     store = await _load_store(ctx)
     try:
@@ -217,6 +217,57 @@ async def _run_build_episodes(
                 on_progress=update,
                 on_log=lambda message: update(None, message),
             )
+        elif planning_mode == "volumes":
+            import json
+
+            from novelvideo.agents.volume_episode_planner import (
+                plan_structure_episodes,
+                to_novel_episodes,
+            )
+            from novelvideo.api.chapter_preview import build_chapter_preview
+            from novelvideo.story_structure import (
+                STORY_STRUCTURE_ARTIFACT,
+                resolve_story_structure_run,
+            )
+
+            novel_text = require_imported_novel(ctx.output_dir)
+            update(0.04, "加载全书结构与章节…")
+            run_id, structure = await resolve_story_structure_run(store, novel_text)
+            if not structure or not structure.volumes:
+                raise ValueError("尚未生成全书结构，请先运行结构分析")
+            chapter_map = {
+                int(chapter["number"]): chapter
+                for chapter in build_chapter_preview(novel_text)["chapters"]
+            }
+            planned = await plan_structure_episodes(
+                structure,
+                chapter_map,
+                target_episodes=target,
+                chars_per_episode=(
+                    int(config["chars_per_episode"])
+                    if config.get("chars_per_episode")
+                    else None
+                ),
+                episode_counts=(
+                    [int(value) for value in config["episode_counts"]]
+                    if config.get("episode_counts")
+                    else None
+                ),
+                on_progress=update,
+                on_log=lambda message: update(None, message),
+            )
+            update(0.92, "写入分集方案…")
+            episodes = to_novel_episodes(
+                planned, chapter_map, existing=store.get_all_episodes()
+            )
+            await store.replace_episodes(episodes)
+            structure.episode_plan = planned
+            if run_id:
+                await store.save_analysis_artifact(
+                    run_id,
+                    STORY_STRUCTURE_ARTIFACT,
+                    json.dumps(structure.model_dump(), ensure_ascii=False),
+                )
         elif planning_mode == "ai_events":
             episodes = await store.build_episodes_from_events(
                 target_episodes=target,

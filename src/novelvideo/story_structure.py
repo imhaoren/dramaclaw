@@ -28,10 +28,13 @@ import asyncio
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional, Sequence
 
 from pydantic import BaseModel, Field
+
+from novelvideo.story_plan_models import PlannedEpisode
 
 logger = logging.getLogger("novelvideo.story_structure")
 
@@ -117,7 +120,11 @@ class StoryStructure(BaseModel):
     total_chars: int = 0
     logline: str = ""
     mainline: str = ""
+    #: 全书核心人物（各卷主要角色的去重合集）。
+    characters: list[str] = Field(default_factory=list)
     volumes: list[Volume] = Field(default_factory=list)
+    #: 按卷分集方案；未规划时为空。
+    episode_plan: list[PlannedEpisode] = Field(default_factory=list)
 
 
 # =============================================================================
@@ -213,6 +220,39 @@ def _clip(text: str, limit: int) -> str:
     return text[:limit] + "\n……（本章后文略）"
 
 
+#: 盗版站常见的广告/水印行。命中整行时删除，避免污染摘要与分卷判断。
+_NOISE_LINE_PATTERNS = (
+    re.compile(r"^\s*(?:本章未完|本章完|未完待续|求月票|求推荐票|求收藏|请收藏|手机阅读|手机用户请|笔趣阁|www\.[a-z0-9.-]+|m\.[a-z0-9.-]+)\s*(?:$|，|。|,)"),
+    re.compile(r"^\s*(?:PS|ps|ＰＳ)：?\s*$"),
+)
+_ZERO_WIDTH = dict.fromkeys(map(ord, "\u200b\u200c\u200d\ufeff"), None)
+
+
+def _clean_chapter_text(text: str) -> str:
+    """确定性清洗：统一换行、去零宽字符、删广告行、压缩空行。
+
+    只清洗送去模型的内容，不改写用户导入的原文，保证章节边界与原文一致。
+    """
+
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    normalized = normalized.translate(_ZERO_WIDTH)
+    kept: list[str] = []
+    blank = False
+    for line in normalized.split("\n"):
+        line = line.rstrip()
+        if any(pattern.match(line) for pattern in _NOISE_LINE_PATTERNS):
+            continue
+        if not line:
+            if blank:
+                continue
+            blank = True
+            kept.append("")
+        else:
+            blank = False
+            kept.append(line)
+    return "\n".join(kept).strip()
+
+
 def _digest_cache_key(chapter: dict) -> str:
     """按章内容哈希。正文没变的章节重跑时直接命中缓存。"""
     payload = (
@@ -235,7 +275,12 @@ def _digest_prompt(batch: Sequence[dict]) -> str:
     ]
     for chapter in batch:
         parts.append(f"=== 第 {chapter['number']} 章 {chapter.get('title', '')} ===")
-        parts.append(_clip(chapter.get("content", ""), MAX_CHARS_PER_CHAPTER))
+        parts.append(
+            _clip(
+                _clean_chapter_text(chapter.get("content", "")),
+                MAX_CHARS_PER_CHAPTER,
+            )
+        )
         parts.append("")
     return "\n".join(parts)
 
@@ -426,6 +471,8 @@ async def _outline_volumes(
     concurrency: int,
     on_progress: Optional[Callable[[float, str], None]],
     on_log: Optional[Callable[[str], None]],
+    progress_start: float = 0.84,
+    progress_span: float = 0.14,
 ) -> list[Volume]:
     by_number = {d.number: d for d in digests}
     agent = _build_agent(VolumeOutline, _OUTLINE_SYSTEM_PROMPT)
@@ -454,7 +501,10 @@ async def _outline_volumes(
                 _log(on_log, f"第 {volume.index} 卷大纲生成失败：{exc}")
         done += 1
         if on_progress:
-            on_progress(0.84 + 0.14 * (done / total), f"已展开 {done}/{total} 卷大纲")
+            on_progress(
+                progress_start + progress_span * (done / total),
+                f"已展开 {done}/{total} 卷大纲",
+            )
         return Volume(
             **volume.model_dump(),
             outline=outline.outline,
@@ -482,6 +532,179 @@ def load_story_structure(blob: str | None) -> StoryStructure | None:
         return None
 
 
+async def resolve_story_structure_run(
+    store: Any, novel_text: str
+) -> tuple[str, StoryStructure | None]:
+    """找到同源分析运行及其产物，返回 ``(run_id, structure)``。
+
+    原文或提取契约变了之后旧产物自然查不到；调用方据此区分「没分析过」和
+    「分析过但产物损坏」。
+    """
+
+    from novelvideo.project_config import load_project_config_file_from_state_dir
+    from novelvideo.story_analysis import source_sha256
+    from novelvideo.structured_ingest import (
+        STRUCTURED_ANALYSIS_VERSION,
+        STRUCTURED_SCHEMA_VERSION,
+    )
+
+    template = str(
+        load_project_config_file_from_state_dir(store.state_dir).get("spine_template")
+        or "drama"
+    ).strip()
+    run = await store.get_reusable_analysis_run(
+        source_sha256=source_sha256(novel_text),
+        schema_version=STRUCTURED_SCHEMA_VERSION,
+        pipeline_version=STRUCTURED_ANALYSIS_VERSION,
+        spine_template=template,
+    )
+    if not run:
+        return "", None
+    run_id = str(run["run_id"])
+    return run_id, load_story_structure(
+        await store.get_analysis_artifact(run_id, STORY_STRUCTURE_ARTIFACT)
+    )
+
+
+def _dedupe_characters(values: Sequence[str], limit: int = 60) -> list[str]:
+    seen: dict[str, None] = {}
+    for value in values:
+        name = str(value or "").strip()
+        if name and name not in seen:
+            seen[name] = None
+        if len(seen) >= limit:
+            break
+    return list(seen)
+
+
+def apply_manual_volume_edits(
+    structure: StoryStructure,
+    volumes: Sequence[Volume],
+    chapters: Sequence[dict],
+    *,
+    logline: str | None = None,
+    mainline: str | None = None,
+) -> StoryStructure:
+    """校验人工调整后的分卷，并返回新的结构副本。
+
+    人工编辑最容易破坏的是「连续覆盖」：少覆盖一章、相邻卷重叠、首卷不从
+    第 1 章开始。这里按章节位置（而不是章号数值）校验，章号不连续的小说也
+    能正确处理；不满足就抛出带具体位置的 ``ValueError``。
+    """
+
+    numbers = [int(ch["number"]) for ch in chapters]
+    if not numbers:
+        raise ValueError("未识别到章节，无法保存分卷")
+    index_by_number = {number: index for index, number in enumerate(numbers)}
+
+    if not volumes:
+        raise ValueError("至少需要保留一卷")
+
+    ordered = sorted(volumes, key=lambda volume: (volume.chapter_start, volume.index))
+    for volume in ordered:
+        if volume.chapter_start not in index_by_number:
+            raise ValueError(f"卷「{volume.title or volume.index}」的起始章号不存在")
+        if volume.chapter_end not in index_by_number:
+            raise ValueError(f"卷「{volume.title or volume.index}」的结束章号不存在")
+        if index_by_number[volume.chapter_end] < index_by_number[volume.chapter_start]:
+            raise ValueError(f"卷「{volume.title or volume.index}」的起止章号顺序颠倒")
+
+    first_index = index_by_number[ordered[0].chapter_start]
+    if first_index != 0:
+        raise ValueError(f"第 1 卷必须从第 {numbers[0]} 章开始")
+    for previous, current in zip(ordered, ordered[1:]):
+        previous_end = index_by_number[previous.chapter_end]
+        current_start = index_by_number[current.chapter_start]
+        if current_start != previous_end + 1:
+            if current_start <= previous_end:
+                raise ValueError(
+                    f"第 {previous.index} 卷与第 {current.index} 卷章节重叠"
+                )
+            raise ValueError(
+                f"第 {previous.index} 卷与第 {current.index} 卷之间漏掉了章节"
+            )
+    last_index = index_by_number[ordered[-1].chapter_end]
+    if last_index != len(numbers) - 1:
+        raise ValueError(f"最后一卷必须覆盖到第 {numbers[-1]} 章")
+
+    updated = structure.model_copy(deep=True)
+    updated.volumes = [
+        volume.model_copy(
+            update={
+                "index": position,
+                "title": (volume.title or f"第{position}卷").strip(),
+            }
+        )
+        for position, volume in enumerate(ordered, start=1)
+    ]
+    if logline is not None:
+        updated.logline = logline
+    if mainline is not None:
+        updated.mainline = mainline
+    updated.characters = _dedupe_characters(
+        [name for volume in updated.volumes for name in volume.characters]
+    )
+    return updated
+
+
+def story_structure_markdown(structure: StoryStructure) -> str:
+    """把全书结构导出为 Markdown，供人工评审或交付。"""
+
+    lines = ["# 全书结构", ""]
+    if structure.logline:
+        lines += [f"**一句话故事**：{structure.logline}", ""]
+    if structure.mainline:
+        lines += ["## 主线", "", structure.mainline, ""]
+    characters = structure.characters or _dedupe_characters(
+        [name for volume in structure.volumes for name in volume.characters]
+    )
+    if characters:
+        lines += ["## 核心人物", "", "、".join(characters), ""]
+    lines += [
+        "## 分卷",
+        "",
+        f"共 {len(structure.volumes)} 卷，{structure.total_chapters} 章，"
+        f"约 {structure.total_chars:,} 字。",
+        "",
+    ]
+    for volume in structure.volumes:
+        lines += [
+            f"### 第 {volume.index} 卷 · {volume.title}"
+            f"（第 {volume.chapter_start}–{volume.chapter_end} 章）",
+            "",
+        ]
+        if volume.stage:
+            lines.append(f"- **阶段**：{volume.stage}")
+        if volume.core_conflict:
+            lines.append(f"- **核心冲突**：{volume.core_conflict}")
+        if volume.characters:
+            lines.append(f"- **主要人物**：{'、'.join(volume.characters)}")
+        if volume.cliffhanger:
+            lines.append(f"- **卷末钩子**：{volume.cliffhanger}")
+        lines.append("")
+        if volume.outline:
+            lines += [volume.outline, ""]
+        if volume.turning_points:
+            lines += ["**转折点**", ""]
+            lines += [f"- {point}" for point in volume.turning_points]
+            lines.append("")
+        if volume.foreshadowing:
+            lines += ["**伏笔**", ""]
+            lines += [f"- {item}" for item in volume.foreshadowing]
+            lines.append("")
+
+    if structure.episode_plan:
+        lines += ["## 分集方案", "", "| 集 | 标题 | 章节 | 摘要 |", "| --- | --- | --- | --- |"]
+        for number, episode in enumerate(structure.episode_plan, start=1):
+            summary = (episode.content_summary or "").replace("|", "｜").replace("\n", " ")
+            lines.append(
+                f"| {number} | {episode.title} | "
+                f"{episode.chapter_start}–{episode.chapter_end} | {summary} |"
+            )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 # =============================================================================
 # 入口
 # =============================================================================
@@ -501,6 +724,10 @@ async def build_story_structure(
     batch_size: int = DEFAULT_BATCH_CHAPTERS,
     concurrency: int = DEFAULT_CONCURRENCY,
     reuse: bool = True,
+    plan_episodes: bool = False,
+    target_episodes: int | None = None,
+    chars_per_episode: int | None = None,
+    episode_counts: Optional[Sequence[int]] = None,
 ) -> StoryStructure:
     """对整本书做分层结构分析并落库。
 
@@ -511,6 +738,10 @@ async def build_story_structure(
         batch_size: 每批摘要的章节数。
         concurrency: 并发请求数。
         reuse: 命中同源产物时直接返回，不重新分析。
+        plan_episodes: 是否在同一次任务里追加「按卷分集」。
+        target_episodes: 目标总集数；按各卷字数占比分配。
+        chars_per_episode: 未指定目标集数时，每集期望承载的字数。
+        episode_counts: 人工指定的每卷集数，优先于目标总集数。
     """
     from novelvideo.api.chapter_preview import build_chapter_preview
     from novelvideo.novel_source import require_imported_novel
@@ -542,7 +773,11 @@ async def build_story_structure(
         existing = load_story_structure(
             await store.get_analysis_artifact(run_id, STORY_STRUCTURE_ARTIFACT)
         )
-        if existing and existing.volumes:
+        # 需要分集而旧产物里没有方案时不能直接返回：分卷与大纲可复用，
+        # 但必须继续把分集补出来。此时重跑一次，摘要仍走缓存，代价可控。
+        if existing and existing.volumes and (
+            not plan_episodes or existing.episode_plan
+        ):
             _log(on_log, "已有同源分析产物，直接复用")
             report(1.0, "复用已有全书分析")
             return existing
@@ -582,6 +817,7 @@ async def build_story_structure(
         ]
     _log(on_log, f"划分出 {len(volumes)} 卷")
 
+    # 还要规划分集时给后半段留出进度空间，避免 98% 之后回退到 86%。
     outlined = await _outline_volumes(
         volumes,
         digests,
@@ -589,7 +825,35 @@ async def build_story_structure(
         concurrency=concurrency,
         on_progress=on_progress,
         on_log=on_log,
+        progress_start=0.74 if plan_episodes else 0.84,
     )
+
+    characters = _dedupe_characters(
+        [name for volume in outlined for name in volume.characters]
+    )
+
+    episode_plan: list[PlannedEpisode] = []
+    if plan_episodes:
+        from novelvideo.agents.volume_episode_planner import plan_structure_episodes
+
+        report(0.86, "按卷规划分集…")
+
+        def episode_progress(progress: float, task: str) -> None:
+            # 分集 planner 的进度是 0.1–0.85，映射到本任务的 0.86–0.98。
+            mapped = max(0.0, min(1.0, (progress - 0.1) / 0.75))
+            report(0.86 + 0.12 * mapped, task)
+
+        episode_plan = await plan_structure_episodes(
+            StoryStructure(volumes=outlined),
+            {int(chapter["number"]): chapter for chapter in chapters},
+            target_episodes=target_episodes,
+            chars_per_episode=chars_per_episode,
+            episode_counts=episode_counts,
+            concurrency=concurrency,
+            on_progress=episode_progress,
+            on_log=on_log,
+        )
+        _log(on_log, f"分集方案完成：{len(episode_plan)} 集")
 
     structure = StoryStructure(
         version=STORY_STRUCTURE_VERSION,
@@ -598,7 +862,9 @@ async def build_story_structure(
         total_chars=total_chars,
         logline=plan.logline,
         mainline=plan.mainline,
+        characters=characters,
         volumes=outlined,
+        episode_plan=episode_plan,
     )
     if run_id:
         await store.save_analysis_artifact(
@@ -606,5 +872,5 @@ async def build_story_structure(
             STORY_STRUCTURE_ARTIFACT,
             json.dumps(structure.model_dump(), ensure_ascii=False),
         )
-    report(1.0, f"完成：{len(outlined)} 卷")
+    report(1.0, f"完成：{len(outlined)} 卷，{len(episode_plan)} 集")
     return structure

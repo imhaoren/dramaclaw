@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import { jsonWithBackendError } from "@/lib/api-errors";
 import { p } from "@/lib/api-path";
@@ -24,6 +24,18 @@ export interface StoryVolume {
   characters: string[];
 }
 
+export interface StoryEpisodePlan {
+  title: string;
+  chapter_start: number;
+  chapter_end: number;
+  content_summary: string;
+  main_conflict: string;
+  cliffhanger: string;
+  key_events: string[];
+  character_names: string[];
+  density: string;
+}
+
 export interface StoryStructure {
   version: string;
   generated_at: string;
@@ -33,10 +45,25 @@ export interface StoryStructure {
   logline: string;
   /** 主线梗概。 */
   mainline: string;
+  /** 全书核心人物。 */
+  characters: string[];
   volumes: StoryVolume[];
+  /** 按卷分集方案；未规划时为空。 */
+  episode_plan: StoryEpisodePlan[];
 }
 
-export function useStoryStructure(project: string, enabled = true) {  return useQuery({
+export interface StoryAnalysisParams {
+  reuse?: boolean;
+  batch_size?: number;
+  concurrency?: number;
+  plan_episodes?: boolean;
+  target_episodes?: number;
+  chars_per_episode?: number;
+  episode_counts?: number[];
+}
+
+export function useStoryStructure(project: string, enabled = true) {
+  return useQuery({
     queryKey: queryKeys.storyStructure(project),
     queryFn: async () => {
       const response = await jsonWithBackendError<ApiResponse<StoryStructure | null>>(
@@ -62,7 +89,7 @@ export function useStoryStructure(project: string, enabled = true) {  return use
  */
 export function useAnalyzeStory(project: string) {
   return useMutation({
-    mutationFn: async (params?: { reuse?: boolean }) => {
+    mutationFn: async (params?: StoryAnalysisParams) => {
       const response = await jsonWithBackendError<TaskResponse | ErrorResponse>(
         api.post(p`api/v1/projects/${project}/story/analyze`, {
           json: params ?? { reuse: true },
@@ -73,6 +100,36 @@ export function useAnalyzeStory(project: string) {
         throw new Error(response.error);
       }
       return response;
+    },
+  });
+}
+
+export interface StoryStructureUpdatePayload {
+  volumes: StoryVolume[];
+  logline?: string;
+  mainline?: string;
+}
+
+/** 保存人工修正后的分卷结构（要求连续覆盖全部章节）。 */
+export function useUpdateStoryStructure(project: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (payload: StoryStructureUpdatePayload) => {
+      const response = await jsonWithBackendError<
+        { ok: true; data: StoryStructure } | ErrorResponse
+      >(
+        api.put(p`api/v1/projects/${project}/story/structure`, {
+          json: payload,
+          throwHttpErrors: false,
+        }),
+      );
+      if (!response.ok) {
+        throw new Error(response.error);
+      }
+      return response.data;
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKeys.storyStructure(project), data);
     },
   });
 }

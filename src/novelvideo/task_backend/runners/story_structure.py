@@ -75,11 +75,28 @@ async def _run_analyze_story(
             batch_size=int(config.get("batch_size") or 0) or 12,
             concurrency=int(config.get("concurrency") or 0) or 3,
             reuse=bool(config.get("reuse", True)),
+            plan_episodes=bool(config.get("plan_episodes", False)),
+            target_episodes=(
+                int(config["target_episodes"])
+                if config.get("target_episodes")
+                else None
+            ),
+            chars_per_episode=(
+                int(config["chars_per_episode"])
+                if config.get("chars_per_episode")
+                else None
+            ),
+            episode_counts=(
+                [int(value) for value in config["episode_counts"]]
+                if config.get("episode_counts")
+                else None
+            ),
         )
         return {
             "volumes": len(structure.volumes),
             "chapters": structure.total_chapters,
             "chars": structure.total_chars,
+            "episodes": len(structure.episode_plan),
         }
     finally:
         await store.close()

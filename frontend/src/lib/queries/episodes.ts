@@ -108,7 +108,12 @@ function cacheEpisodeUpdate(
 export function usePlanEpisodes(project: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (params?: { target_episodes?: number; planning_mode?: string }) =>
+    mutationFn: (params?: {
+      target_episodes?: number;
+      planning_mode?: "chapters" | "volumes" | "ai" | "ai_events";
+      chars_per_episode?: number;
+      episode_counts?: number[];
+    }) =>
       jsonWithBackendError<TaskResponse | ErrorResponse>(
         api.post(p`api/v1/projects/${project}/episodes/plan`, {
           json: params ?? {},

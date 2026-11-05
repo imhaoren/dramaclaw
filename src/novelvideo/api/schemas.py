@@ -143,7 +143,12 @@ class PortraitGenRequest(BaseModel):
 
 class EpisodePlanRequest(BaseModel):
     target_episodes: int = 10
+    #: chapters=按章映射；volumes=按卷规划（结构化项目）；其余走图谱 AI 规划。
     planning_mode: str = "chapters"
+    #: 每集期望承载的字数；未指定目标集数时使用。
+    chars_per_episode: int | None = Field(default=None, ge=500, le=100_000)
+    #: 人工指定的每卷集数，优先于 target_episodes。
+    episode_counts: list[int] | None = None
 
 
 class StoryAnalysisRequest(BaseModel):
@@ -155,6 +160,39 @@ class StoryAnalysisRequest(BaseModel):
     batch_size: int | None = Field(default=None, ge=1, le=60)
     #: 并发请求数。网关限流时调小。
     concurrency: int | None = Field(default=None, ge=1, le=8)
+    #: 是否在同一次任务里追加「按卷分集」。
+    plan_episodes: bool = False
+    #: 目标总集数；按各卷字数占比分配。
+    target_episodes: int | None = Field(default=None, ge=1, le=2000)
+    #: 每集期望承载的字数；未指定目标集数时使用。
+    chars_per_episode: int | None = Field(default=None, ge=500, le=100_000)
+    #: 人工指定的每卷集数，优先于目标总集数。
+    episode_counts: list[int] | None = None
+
+
+class StoryVolumeEdit(BaseModel):
+    """人工修正后的单卷。"""
+
+    index: int = 1
+    title: str = ""
+    chapter_start: int
+    chapter_end: int
+    stage: str = ""
+    core_conflict: str = ""
+    key_events: list[str] = Field(default_factory=list)
+    cliffhanger: str = ""
+    outline: str = ""
+    turning_points: list[str] = Field(default_factory=list)
+    foreshadowing: list[str] = Field(default_factory=list)
+    characters: list[str] = Field(default_factory=list)
+
+
+class StoryStructureUpdate(BaseModel):
+    """保存人工修正的全书结构。"""
+
+    volumes: list[StoryVolumeEdit]
+    logline: str | None = None
+    mainline: str | None = None
 
 
 # ── 剧本 ──────────────────────────────────────────────────────────────────────
@@ -404,6 +442,9 @@ class EpisodeUpdate(BaseModel):
         validation_alias=AliasChoices("summary", "content_summary"),
         serialization_alias="summary",
     )
+    main_conflict: Optional[str] = None
+    chapter_start: Optional[int] = None
+    chapter_end: Optional[int] = None
     character_names: Optional[list[str]] = None
     key_events: Optional[list[str]] = None
     cliffhanger: Optional[str] = None

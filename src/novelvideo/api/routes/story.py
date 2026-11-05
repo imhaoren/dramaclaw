@@ -5,9 +5,12 @@
 所以它可以随时重跑而不影响已有分集。
 """
 
+import json
 import logging
+from typing import Literal
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from novelvideo.api.auth import get_api_user
 from novelvideo.api.deps import (
@@ -15,7 +18,7 @@ from novelvideo.api.deps import (
     sqlite_store_for_context_scope,
     sqlite_store_scope,
 )
-from novelvideo.api.schemas import StoryAnalysisRequest
+from novelvideo.api.schemas import StoryAnalysisRequest, StoryStructureUpdate
 from novelvideo.knowledge_pipeline import is_structured_pipeline
 from novelvideo.novel_source import has_imported_novel, novel_import_required_response
 from novelvideo.ports import get_task_backend
@@ -74,52 +77,131 @@ async def analyze_story(
     }
 
 
-@router.get("/projects/{project}/story/structure")
-async def get_story_structure(project: str, user: dict = Depends(get_api_user)):
-    """读取已生成的全书结构；没有分析过时 data 为 null。"""
-    from novelvideo.story_structure import (
-        STORY_STRUCTURE_ARTIFACT,
-        load_story_structure,
-    )
-    from novelvideo.story_analysis import source_sha256
-    from novelvideo.novel_source import load_imported_novel_content
-    from novelvideo.project_config import load_project_config_file_from_state_dir
-    from novelvideo.structured_ingest import (
-        STRUCTURED_ANALYSIS_VERSION,
-        STRUCTURED_SCHEMA_VERSION,
-    )
-
-    resolved = await resolve_project_scope(project, user, required_role="viewer")
-    store_scope = (
+def _store_scope_for(resolved):
+    return (
         sqlite_store_for_context_scope(resolved.ctx)
         if resolved.ctx
         else sqlite_store_scope(resolved.username, resolved.project_name)
     )
-    async with store_scope as store:
+
+
+@router.get("/projects/{project}/story/structure")
+async def get_story_structure(project: str, user: dict = Depends(get_api_user)):
+    """读取已生成的全书结构；没有分析过时 data 为 null。"""
+    from novelvideo.novel_source import load_imported_novel_content
+    from novelvideo.story_structure import resolve_story_structure_run
+
+    resolved = await resolve_project_scope(project, user, required_role="viewer")
+    async with _store_scope_for(resolved) as store:
         # 产物挂在「同源原文 + 同一提取契约」的那次分析运行上。原文被重新导入
         # 之后哈希就变了，旧产物自然查不到——这正是我们想要的行为。
         novel_text = load_imported_novel_content(resolved.project_dir) or ""
-        structure = None
-        if novel_text:
-            template = str(
-                load_project_config_file_from_state_dir(resolved.state_dir).get(
-                    "spine_template"
-                )
-                or "drama"
-            ).strip()
-            run = await store.get_reusable_analysis_run(
-                source_sha256=source_sha256(novel_text),
-                schema_version=STRUCTURED_SCHEMA_VERSION,
-                pipeline_version=STRUCTURED_ANALYSIS_VERSION,
-                spine_template=template,
-            )
-            if run:
-                structure = load_story_structure(
-                    await store.get_analysis_artifact(
-                        str(run["run_id"]), STORY_STRUCTURE_ARTIFACT
-                    )
-                )
+        _, structure = await resolve_story_structure_run(store, novel_text)
     return {
         "ok": True,
         "data": structure.model_dump() if structure else None,
     }
+
+
+@router.put("/projects/{project}/story/structure")
+async def update_story_structure(
+    project: str,
+    body: StoryStructureUpdate,
+    user: dict = Depends(get_api_user),
+):
+    """保存人工修正后的分卷结构。
+
+    只允许「连续覆盖全部章节」的编辑：少一章、叠一章都会被拒绝并给出具体
+    位置，避免下游按章节区间取原文时出现空洞。
+    """
+    from novelvideo.api.chapter_preview import build_chapter_preview
+    from novelvideo.novel_source import load_imported_novel_content
+    from novelvideo.story_structure import (
+        STORY_STRUCTURE_ARTIFACT,
+        Volume,
+        apply_manual_volume_edits,
+        resolve_story_structure_run,
+    )
+
+    resolved = await resolve_project_scope(project, user, required_role="editor")
+    if not has_imported_novel(resolved.project_dir):
+        return novel_import_required_response()
+    if not is_structured_pipeline(resolved.state_dir):
+        return {
+            "ok": False,
+            "code": "KNOWLEDGE_PIPELINE_UNSUPPORTED",
+            "error": "全书结构修正仅支持结构化项目",
+        }
+
+    novel_text = load_imported_novel_content(resolved.project_dir) or ""
+    async with _store_scope_for(resolved) as store:
+        run_id, structure = await resolve_story_structure_run(store, novel_text)
+        if not structure:
+            return {
+                "ok": False,
+                "code": "STORY_STRUCTURE_NOT_FOUND",
+                "error": "尚未生成全书结构，请先运行结构分析",
+            }
+        chapters = build_chapter_preview(novel_text)["chapters"]
+        volumes = [Volume(**volume.model_dump()) for volume in body.volumes]
+        try:
+            updated = apply_manual_volume_edits(
+                structure,
+                volumes,
+                chapters,
+                logline=body.logline,
+                mainline=body.mainline,
+            )
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "code": "STORY_STRUCTURE_INVALID",
+                "error": str(exc),
+            }
+        await store.save_analysis_artifact(
+            run_id,
+            STORY_STRUCTURE_ARTIFACT,
+            json.dumps(updated.model_dump(), ensure_ascii=False),
+        )
+    return {"ok": True, "data": updated.model_dump()}
+
+
+@router.get("/projects/{project}/story/structure/export")
+async def export_story_structure(
+    project: str,
+    format: Literal["json", "markdown"] = "markdown",
+    user: dict = Depends(get_api_user),
+):
+    """导出全书结构（含分集方案）。"""
+    from novelvideo.novel_source import load_imported_novel_content
+    from novelvideo.story_structure import (
+        resolve_story_structure_run,
+        story_structure_markdown,
+    )
+
+    resolved = await resolve_project_scope(project, user, required_role="viewer")
+    async with _store_scope_for(resolved) as store:
+        novel_text = load_imported_novel_content(resolved.project_dir) or ""
+        _, structure = await resolve_story_structure_run(store, novel_text)
+    if not structure:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "ok": False,
+                "code": "STORY_STRUCTURE_NOT_FOUND",
+                "error": "尚未生成全书结构",
+            },
+        )
+    if format == "json":
+        content = json.dumps(structure.model_dump(), ensure_ascii=False, indent=2)
+        media_type = "application/json"
+        filename = f"{resolved.project_name}-story-structure.json"
+    else:
+        content = story_structure_markdown(structure)
+        media_type = "text/markdown; charset=utf-8"
+        filename = f"{resolved.project_name}-story-structure.md"
+    return PlainTextResponse(
+        content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
