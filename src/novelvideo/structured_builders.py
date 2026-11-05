@@ -9,8 +9,13 @@ The three builds differ in how much they can usefully do up front:
 * **Scenes** are worth discovering up front only for screenplays, where scene
   headings already name every location.  Narrated projects have no comparable
   marker, so their scenes accumulate per episode instead.
-* **Props** are never worth a full-text sweep.  What matters is which objects
-  carry story weight in a given episode, which is a per-episode judgement.
+* **Props** used to defer entirely to per-episode planning, on the argument that
+  story weight is only decidable per episode.  That left the asset page with no
+  way to populate props at all before episodes existed, so the sweep now lives
+  in :mod:`novelvideo.prop_build`: it applies the same conservative criteria as
+  the per-episode planner (movable, handled or recurring, never background
+  furniture) and grounds every proposal in a verbatim source fragment, so the
+  catalogue is usable without waiting for scripts.
 """
 
 from __future__ import annotations
@@ -25,7 +30,6 @@ import json
 from novelvideo.story_analysis import SourceChunk, chunk_source_text
 from novelvideo.utils.source_language import AssetLanguage, detect_asset_language
 
-PROP_BUILD_DEFERRED_MESSAGE = "道具将在分集规划时按需生成"
 SCENE_BUILD_DEFERRED_MESSAGE = "解说剧场景将在分集规划时按需生成"
 
 
@@ -565,22 +569,22 @@ async def build_props_structured(
     on_progress: Optional[Callable[[float, str], None]] = None,
     on_log: Optional[Callable[[str], None]] = None,
 ) -> dict:
-    """Report that props are discovered per episode, not swept up front.
+    """Sweep the imported source for props and publish them as project assets.
 
-    A full-text prop sweep cannot tell a story-bearing object from background
-    furniture, because that distinction depends on what an episode does with it.
-    This returns an explicit deferral rather than a silent no-op, so callers do
-    not read "0 props" as "the analysis found nothing".
+    Kept as a thin delegation so the task runner, the API route and the tests all
+    keep one entry point, while the judgement calls (what counts as a prop, how
+    to keep it consistent with existing characters and scenes, how to survive a
+    partially failed sweep) live in :mod:`novelvideo.prop_build`.
+
+    The sweep runs for narrated projects too: props, unlike locations, are named
+    explicitly in prose, so the evidence gate that protects the scene build is
+    not needed here.
     """
-    if on_log:
-        on_log(lmsg("tasks.log.props.deferred", PROP_BUILD_DEFERRED_MESSAGE))
-    if on_progress:
-        on_progress(1.0, lmsg("tasks.progress.props.perEpisode", "道具按分集生成"))
-    return {
-        "props": 0,
-        "mode": "episode_on_demand",
-        "message": PROP_BUILD_DEFERRED_MESSAGE,
-    }
+    from novelvideo.prop_build import build_props_from_novel
+
+    return await build_props_from_novel(
+        store, on_progress=on_progress, on_log=on_log
+    )
 
 
 def _scene_heading_counts(novel_text: str) -> dict[str, int]:

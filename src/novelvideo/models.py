@@ -1584,6 +1584,11 @@ class NovelProp(BaseModel):
     visual_prompt: str = Field(default="", description="道具视觉 prompt（用于生成参考图）")
     description: str = Field(default="", description="道具叙述性描述（材质、尺寸、用途）")
 
+    #: 尺度锚点，如「全长约 1.1m，约到成年男性胸口」。
+    #: 单独成字段而不是塞进 description：下游出图与分镜提示词都要用它约束
+    #: 尺寸，混在自然语言描述里没法可靠取出来。
+    scale: str = Field(default="", description="可比较的尺寸锚点（相对身高/手掌/常见物体）")
+
     owner: str = Field(default="", description="所属角色名")
     notes: str = Field(default="")
     updated_at: str = Field(default="", description="道具资产最后一次内容变化时间 ISO 字符串")

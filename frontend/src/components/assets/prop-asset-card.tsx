@@ -149,6 +149,11 @@ export function PropAssetCard({
             {t("assets.props.owner")}：{prop.owner}
           </p>
         )}
+        {prop.scale && (
+          <p className="text-xs text-muted-foreground">
+            {t("assets.props.fields.scale")}：{prop.scale}
+          </p>
+        )}
         {description && (
           <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">
             {description}

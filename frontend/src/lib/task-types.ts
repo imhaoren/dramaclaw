@@ -14,6 +14,7 @@ export const TASK_TYPES = {
   // Project-level
   BUILD_CHARACTERS: "build_characters",
   BUILD_SCENES: "build_scenes",
+  BUILD_PROPS: "build_props",
   INGEST_FAST: "ingest_fast",
   ANALYZE_STORY: "analyze_story",
   BUILD_EPISODES: "build_episodes",

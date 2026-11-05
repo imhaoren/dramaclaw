@@ -2773,6 +2773,13 @@
       "count": "{{count}} adereços",
       "newProp": "Novo adereço",
       "newPropHint": "A extração de adereços por IA é executada por episódio no Episode Studio",
+      "build": "Gerar adereços com IA",
+      "buildHint": "Encontra os adereços que devem manter continuidade entre planos e preenche a aparência conforme o estilo do projeto e a escala das personagens",
+      "building": "A analisar o texto…",
+      "buildingEmpty": {
+        "title": "A gerar adereços",
+        "description": "A IA está a ler o texto à procura de adereços recorrentes. Aparecerão aqui quando terminar."
+      },
       "editProp": "Editar adereço",
       "emptyTitle": "Ainda não há adereços",
       "emptyDescription": "Crie um adereço ou promova os adereços do episódio na página do beat.",
@@ -2804,8 +2811,11 @@
         "name": "Nome do adereço",
         "type": "Tipo de adereço",
         "owner": "Proprietário",
-        "visualPrompt": "Prompt visual"
-      }
+        "visualPrompt": "Prompt visual",
+        "scale": "Escala"
+      },
+      "scalePlaceholder": "ex.: cerca de 1,1 m de comprimento, até ao peito de um adulto",
+      "scaleHint": "Indique uma referência de tamanho comparável; é usada para limitar as proporções na imagem de referência."
     },
     "narratorVoice": {
       "heading": {
@@ -3218,6 +3228,7 @@
     "currentOnly": "Apenas o projeto atual ({{count}} outros)",
     "types": {
       "build_characters": "Construir personagens",
+      "build_props": "Criar adereços",
       "ingest_fast": "Ingestão rápida",
       "build_episodes": "Planear episódios",
       "character_portrait": "Retrato da personagem",
@@ -3246,7 +3257,6 @@
       "compose_episode": "Composição de vídeo",
       "freezone_image_reverse_prompt": "Prompt inverso de imagem",
       "build_scenes": "Criar cenas",
-      "build_props": "Criar adereços",
       "beat_video_prompt": "Gerar prompt",
       "scene_reference_asset": "Imagem de referência da cena",
       "prop_reference_asset": "Imagem de referência do adereço",
@@ -3410,7 +3420,8 @@
       }
     },
     "toast": {
-      "scenesBuildQueued": "Tarefa de criação de cenas colocada em fila"
+      "scenesBuildQueued": "Tarefa de criação de cenas colocada em fila",
+      "propsBuildQueued": "Geração de adereços em fila"
     }
   },
   "taskCenter": {

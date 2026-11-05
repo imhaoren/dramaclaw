@@ -2659,6 +2659,13 @@
       "count": "{{count}} đạo cụ",
       "newProp": "Đạo cụ mới",
       "newPropHint": "AI trích xuất đạo cụ theo từng tập trong Studio Tập phim",
+      "build": "Tạo đạo cụ bằng AI",
+      "buildHint": "Tìm các đạo cụ cần giữ nhất quán giữa các cảnh rồi bổ sung phần hình ảnh theo phong cách dự án và tỉ lệ nhân vật",
+      "building": "Đang phân tích văn bản…",
+      "buildingEmpty": {
+        "title": "Đang tạo đạo cụ",
+        "description": "AI đang đọc văn bản để tìm các đạo cụ xuất hiện lặp lại. Chúng sẽ hiện ở đây khi hoàn tất."
+      },
       "editProp": "Sửa đạo cụ",
       "emptyTitle": "Chưa có đạo cụ nào",
       "emptyDescription": "Tạo đạo cụ mới hoặc đưa đạo cụ của tập phim lên từ trang beat.",
@@ -2690,8 +2697,11 @@
         "name": "Tên đạo cụ",
         "type": "Loại đạo cụ",
         "owner": "Chủ sở hữu",
-        "visualPrompt": "Prompt hình ảnh"
-      }
+        "visualPrompt": "Prompt hình ảnh",
+        "scale": "Tỉ lệ"
+      },
+      "scalePlaceholder": "ví dụ: dài khoảng 1,1 m, tới ngực một người trưởng thành",
+      "scaleHint": "Hãy nêu một mốc kích thước so sánh được; nó dùng để ràng buộc tỉ lệ khi tạo ảnh tham chiếu."
     },
     "narratorVoice": {
       "heading": {
@@ -3104,6 +3114,7 @@
     "currentOnly": "Chỉ dự án hiện tại ({{count}} dự án khác)",
     "types": {
       "build_characters": "Dựng nhân vật",
+      "build_props": "Dựng đạo cụ",
       "ingest_fast": "Nhập truyện nhanh",
       "build_episodes": "Lên kế hoạch tập phim",
       "character_portrait": "Chân dung nhân vật",
@@ -3131,7 +3142,6 @@
       "compose_episode": "Dựng video",
       "freezone_image_reverse_prompt": "Đảo ngược prompt từ ảnh",
       "build_scenes": "Dựng bối cảnh",
-      "build_props": "Dựng đạo cụ",
       "beat_video_prompt": "Tạo prompt",
       "scene_reference_asset": "Ảnh tham chiếu bối cảnh",
       "prop_reference_asset": "Ảnh tham chiếu đạo cụ",
@@ -3296,7 +3306,8 @@
       }
     },
     "toast": {
-      "scenesBuildQueued": "Tác vụ dựng bối cảnh đã vào hàng đợi"
+      "scenesBuildQueued": "Tác vụ dựng bối cảnh đã vào hàng đợi",
+      "propsBuildQueued": "Đã xếp hàng tạo đạo cụ"
     }
   },
   "taskCenter": {

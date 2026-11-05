@@ -17,6 +17,7 @@ export interface PropPayload {
   description?: string;
   owner?: string;
   notes?: string;
+  scale?: string;
 }
 
 export function useProps(project: string) {
@@ -66,6 +67,24 @@ export function useDeleteProp(project: string) {
         .post(p`api/v1/projects/${project}/props/${name}/delete`)
         .json<OkResponse<{ deleted: boolean }> | ErrorResponse>(),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.props(project) }),
+  });
+}
+
+/**
+ * AI 从原文批量生成道具目录。
+ *
+ * 只负责入队：真正的抽取在后台任务里跑，loading 状态要绑任务中心
+ * （`useTaskActivity("build_props")`），否则刷新后就认不出来了。
+ */
+export function useBuildProps(project: string) {
+  return useMutation({
+    mutationFn: () =>
+      jsonWithBackendError<TaskResponse | ErrorResponse>(
+        api.post(p`api/v1/projects/${project}/props/build`, {
+          json: {},
+          throwHttpErrors: false,
+        }),
+      ),
   });
 }
 

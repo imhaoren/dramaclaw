@@ -2773,6 +2773,13 @@
       "count": "{{count}} 个道具",
       "newProp": "新建道具",
       "newPropHint": "AI自动提取道具需要在虾镜中按集数分集提取",
+      "build": "AI 生成道具",
+      "buildHint": "从已导入的原文里找出需要跨镜头追踪的道具，并按项目风格与角色尺度补齐视觉设定",
+      "building": "正在分析原文…",
+      "buildingEmpty": {
+        "title": "正在生成道具",
+        "description": "AI 正在通读原文，找出需要跨镜头保持一致的道具；完成后会自动出现在这里。"
+      },
       "editProp": "编辑道具",
       "emptyTitle": "暂无道具数据",
       "emptyDescription": "新建道具，或在 beat 页把本集道具加入全局。",
@@ -2804,8 +2811,11 @@
         "name": "道具名称",
         "type": "道具类型",
         "owner": "所属角色",
-        "visualPrompt": "视觉 提示词"
-      }
+        "visualPrompt": "视觉 提示词",
+        "scale": "尺度"
+      },
+      "scalePlaceholder": "如：全长约 1.1m，约到成年男性胸口",
+      "scaleHint": "写一个可比较的尺寸参照，出参考图时用它约束比例。"
     },
     "narratorVoice": {
       "heading": {
@@ -3218,6 +3228,7 @@
     "currentOnly": "仅本项目 (其他 {{count}})",
     "types": {
       "build_characters": "构建角色",
+      "build_props": "构建道具",
       "ingest_fast": "快速导入",
       "build_episodes": "规划剧集",
       "character_portrait": "角色肖像",
@@ -3246,7 +3257,6 @@
       "compose_episode": "视频合成",
       "freezone_image_reverse_prompt": "图片反推提示词",
       "build_scenes": "构建场景",
-      "build_props": "构建道具",
       "beat_video_prompt": "生成提示词",
       "scene_reference_asset": "场景参考图",
       "prop_reference_asset": "道具参考图",
@@ -3410,7 +3420,8 @@
       }
     },
     "toast": {
-      "scenesBuildQueued": "场景补充任务已进入队列"
+      "scenesBuildQueued": "场景补充任务已进入队列",
+      "propsBuildQueued": "道具生成任务已进入队列"
     }
   },
   "taskCenter": {

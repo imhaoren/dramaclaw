@@ -2773,6 +2773,13 @@
       "count": "{{count}} props",
       "newProp": "New prop",
       "newPropHint": "AI prop extraction runs per episode in Episode Studio",
+      "build": "Generate props with AI",
+      "buildHint": "Find the props that must stay consistent across shots, then fill in visuals that match the project style and character scale",
+      "building": "Analysing the source…",
+      "buildingEmpty": {
+        "title": "Generating props",
+        "description": "The AI is reading the source for props that recur across shots. They will appear here when it finishes."
+      },
       "editProp": "Edit prop",
       "emptyTitle": "No props yet",
       "emptyDescription": "Create a prop or promote episode props from the beat page.",
@@ -2804,8 +2811,11 @@
         "name": "Prop name",
         "type": "Prop type",
         "owner": "Owner",
-        "visualPrompt": "Visual prompt"
-      }
+        "visualPrompt": "Visual prompt",
+        "scale": "Scale"
+      },
+      "scalePlaceholder": "e.g. about 1.1 m long, reaching an adult man's chest",
+      "scaleHint": "Give a comparable size reference; it constrains proportions when the reference image is generated."
     },
     "narratorVoice": {
       "heading": {
@@ -3218,6 +3228,7 @@
     "currentOnly": "Current project only ({{count}} others)",
     "types": {
       "build_characters": "Build characters",
+      "build_props": "Build props",
       "ingest_fast": "Quick ingest",
       "build_episodes": "Plan episodes",
       "character_portrait": "Character portrait",
@@ -3246,7 +3257,6 @@
       "compose_episode": "Video compose",
       "freezone_image_reverse_prompt": "Image reverse prompt",
       "build_scenes": "Build scenes",
-      "build_props": "Build props",
       "beat_video_prompt": "Generate prompt",
       "scene_reference_asset": "Scene reference image",
       "prop_reference_asset": "Prop reference image",
@@ -3410,7 +3420,8 @@
       }
     },
     "toast": {
-      "scenesBuildQueued": "Scene build task queued"
+      "scenesBuildQueued": "Scene build task queued",
+      "propsBuildQueued": "Prop generation queued"
     }
   },
   "taskCenter": {

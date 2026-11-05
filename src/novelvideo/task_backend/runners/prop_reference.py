@@ -87,6 +87,7 @@ async def _run_prop_reference_asset(
                 state_dir=str(ctx.state_dir),
                 model=model,
                 egress_context=egress_context,
+                scale=str(getattr(prop, "scale", "") or ""),
             )
         if not result_path:
             raise RuntimeError("图像 API 未返回有效图像")

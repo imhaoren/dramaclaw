@@ -71,6 +71,7 @@ def build_prop_reference_prompt(
     style: str | None = None,
     project_dir: str = "",
     state_dir: str = "",
+    scale: str = "",
 ) -> str:
     """Build the exact prompt used for prop reference-sheet generation."""
     if style is None:
@@ -87,6 +88,16 @@ def build_prop_reference_prompt(
     all_style = ", ".join(filter(None, [preset_style, style_keywords]))
     all_negative = preset_negative
 
+    # 尺度只用于约束比例，不引入参照物：道具参考图里不能出现人或标尺，
+    # 否则下游分镜会把参照物一起学进去。
+    scale_block = ""
+    if str(scale or "").strip():
+        scale_block = (
+            "\nPHYSICAL SCALE (proportion only — do NOT draw a person, hand, ruler, "
+            "or any reference object):\n"
+            f"{str(scale).strip()}\n"
+        )
+
     return f"""Generate a 3-PANEL product reference sheet for a story prop.
 
 LAYOUT (1x3, 16:9 overall):
@@ -98,7 +109,7 @@ LAYOUT (1x3, 16:9 overall):
 
 PROP DESCRIPTION:
 {visual_prompt}
-
+{scale_block}
 PRODUCT PHOTOGRAPHY STYLE:
 - Clean white or light gray seamless background
 - Soft studio lighting, no harsh shadows
@@ -139,6 +150,7 @@ async def generate_prop_reference(
     state_dir: str = "",
     model: str | None = None,
     egress_context: TrustedEgressContext | None = None,
+    scale: str = "",
 ) -> Optional[str]:
     """生成道具三视图参考图。
 
@@ -171,6 +183,7 @@ async def generate_prop_reference(
             style=style,
             project_dir=project_dir,
             state_dir=state_dir,
+            scale=scale,
         )
         await generate_text_to_image(
             prompt=prompt,
@@ -230,6 +243,7 @@ async def generate_prop_reference(
         style=style,
         project_dir=project_dir,
         state_dir=state_dir,
+        scale=scale,
     )
 
     print(f"[PropRefGen] 生成道具三视图: {visual_prompt[:60]}...")

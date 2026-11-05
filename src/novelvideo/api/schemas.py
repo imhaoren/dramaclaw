@@ -146,6 +146,17 @@ class EpisodePlanRequest(BaseModel):
     planning_mode: str = "chapters"
 
 
+class StoryAnalysisRequest(BaseModel):
+    """全书结构分析。所有字段可选，默认按项目的常规规模跑。"""
+
+    #: 同源产物存在时直接复用，不重新花钱分析。
+    reuse: bool = True
+    #: 每批摘要的章节数；不填用模块默认值。
+    batch_size: int | None = Field(default=None, ge=1, le=60)
+    #: 并发请求数。网关限流时调小。
+    concurrency: int | None = Field(default=None, ge=1, le=8)
+
+
 # ── 剧本 ──────────────────────────────────────────────────────────────────────
 
 
@@ -2279,6 +2290,7 @@ class PropCreate(BaseModel):
     description: str = ""
     owner: str = ""
     notes: str = ""
+    scale: str = ""
 
 
 class PropUpdate(BaseModel):
@@ -2289,6 +2301,7 @@ class PropUpdate(BaseModel):
     description: Optional[str] = None
     owner: Optional[str] = None
     notes: Optional[str] = None
+    scale: Optional[str] = None
 
 
 class PropReferenceGenerateRequest(BaseModel):

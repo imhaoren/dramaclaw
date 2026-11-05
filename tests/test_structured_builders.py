@@ -595,15 +595,31 @@ async def test_narrated_scene_build_defers_instead_of_guessing(structured_store)
     assert await store.list_scenes() == []
 
 
-async def test_prop_build_reports_deferral_rather_than_a_silent_zero(structured_store):
-    """"0 props" must not read as "the analysis found nothing"."""
+async def test_prop_build_delegates_to_the_novel_wide_sweep(structured_store, monkeypatch):
+    """Props are now swept from the source, not deferred to per-episode planning.
+
+    The old implementation returned an explicit "episode_on_demand" placeholder,
+    which left the asset page unable to populate props at all before scripts
+    existed. The judgement rules live in ``novelvideo.prop_build``; this test
+    only pins the wiring so the task runner keeps reaching it.
+    """
+    from novelvideo import prop_build
     from novelvideo.structured_builders import build_props_structured
 
     store, _ = structured_store
+    captured: dict[str, object] = {}
+
+    async def fake_sweep(store_arg, **kwargs):
+        captured["store"] = store_arg
+        captured["kwargs"] = kwargs
+        return {"props": 1, "added_props": 1, "mode": "novel_sweep"}
+
+    monkeypatch.setattr(prop_build, "build_props_from_novel", fake_sweep)
+
     result = await build_props_structured(store)
-    assert result["props"] == 0
-    assert result["mode"] == "episode_on_demand"
-    assert result["message"]
+
+    assert result["mode"] == "novel_sweep"
+    assert captured["store"] is store
 
 
 async def test_character_build_propagates_the_full_source_language(

@@ -214,6 +214,7 @@ CREATE TABLE IF NOT EXISTS props (
     description        TEXT DEFAULT '',
     owner              TEXT DEFAULT '',
     notes              TEXT DEFAULT '',
+    scale              TEXT DEFAULT '',
     created_at         TEXT DEFAULT (datetime('now')),
     updated_at         TEXT DEFAULT (datetime('now'))
 );
@@ -399,7 +400,7 @@ _PROJECT_STORE_SCHEMA_COMPONENT = "project_store"
 # MIGRATION CONTRACT: increment this whenever SQLITE_SCHEMA_SQL or any
 # _ensure_*_columns migration above changes. Existing databases skip the
 # initializer after this version has been recorded.
-_PROJECT_STORE_SCHEMA_VERSION = 5
+_PROJECT_STORE_SCHEMA_VERSION = 6
 
 
 def _table_columns(db: sqlite3.Connection, table: str) -> set[str]:
@@ -541,6 +542,7 @@ class SQLiteStore:
             self._ensure_episode_planning_columns(db)
             self._ensure_beat_current_columns(db)
             self._ensure_scene_columns(db)
+            self._ensure_prop_columns(db)
             self._ensure_indextts2_columns(db)
 
         ensure_sqlite_schema(
@@ -563,6 +565,10 @@ class SQLiteStore:
         )
         for name in ("base_scene_id", "variant_id", "time_of_day", "variant_prompt"):
             _add_column_if_missing(db, "scenes", name, "TEXT DEFAULT ''")
+
+    def _ensure_prop_columns(self, db: sqlite3.Connection) -> None:
+        """Add prop columns introduced after early project databases were created."""
+        _add_column_if_missing(db, "props", "scale", "TEXT DEFAULT ''")
 
     def _ensure_indextts2_columns(self, db: sqlite3.Connection) -> None:
         """Add IndexTTS2 / Seedance 2.0 voice columns introduced in Stage A."""
@@ -1480,8 +1486,8 @@ class SQLiteStore:
         db = await self._ensure_db()
         await db.execute(
             """INSERT INTO props (name, aliases_json, prop_type, visual_prompt,
-               description, owner, notes)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
+               description, owner, notes, scale)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(name) DO UPDATE SET
                aliases_json=excluded.aliases_json,
                prop_type=excluded.prop_type,
@@ -1489,6 +1495,7 @@ class SQLiteStore:
                description=excluded.description,
                owner=excluded.owner,
                notes=excluded.notes,
+               scale=excluded.scale,
                updated_at=datetime('now')""",
             (
                 prop.name,
@@ -1498,6 +1505,7 @@ class SQLiteStore:
                 prop.description,
                 prop.owner,
                 prop.notes,
+                prop.scale,
             ),
         )
         await db.commit()
@@ -1536,6 +1544,7 @@ class SQLiteStore:
             "description",
             "owner",
             "notes",
+            "scale",
         }
         set_parts = []
         values = []
@@ -1618,6 +1627,7 @@ class SQLiteStore:
             description=row["description"] or "",
             owner=row["owner"] or "",
             notes=row["notes"] or "",
+            scale=(row["scale"] or "") if "scale" in row.keys() else "",
             updated_at=row["updated_at"] if "updated_at" in row.keys() else "",
         )
 

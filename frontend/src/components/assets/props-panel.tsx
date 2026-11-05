@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Package, Plus } from "lucide-react";
+import { Loader2, Package, Plus, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { toast } from "sonner";
 
 import { AssetHeaderActions } from "@/components/assets/asset-header-actions-slot";
 import { CharacterImageSourceSelect } from "@/components/assets/character-image-source-select";
+import { CreditCostInline } from "@/components/credit-cost-inline";
 import { PropAssetCard } from "@/components/assets/prop-asset-card";
+import { Progress } from "@/components/ui/progress";
 import { AssetBeatReferences } from "@/components/assets/asset-beat-references";
 import {
   AssetResultCount,
@@ -48,12 +50,17 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useTaskController } from "@/hooks/use-task-controller";
+import { useTaskStream } from "@/hooks/use-task-stream";
+import { useTaskActivity } from "@/task-center/use-task-activity";
 import { propReferenceAssetScope } from "@/lib/task-scope";
 import {
+  backendErrorResponseToastMessage,
   backendErrorToastMessage,
   BillingRuleNotConfiguredError,
+  taskResponseToastMessage,
 } from "@/lib/api-errors";
 import {
+  useBuildProps,
   useCreateProp,
   useDeleteProp,
   useGeneratePropReferenceAsync,
@@ -74,6 +81,7 @@ const PROP_FORM_DEFAULT: PropPayload = {
   visual_prompt: "",
   description: "",
   owner: "",
+  scale: "",
 };
 
 const PROP_TYPE_VALUES = [
@@ -128,6 +136,7 @@ function PropDialog({
             description: initial.description ?? "",
             owner: initial.owner ?? "",
             notes: initial.notes ?? "",
+            scale: initial.scale ?? "",
           }
         : PROP_FORM_DEFAULT,
     );
@@ -200,6 +209,20 @@ function PropDialog({
               }
               className={PROP_DIALOG_TEXTAREA_CLASS}
             />
+          </div>
+          <div className="grid gap-2">
+            <Label className="text-sm">{t("assets.props.fields.scale")}</Label>
+            <Input
+              value={draft.scale ?? ""}
+              placeholder={t("assets.props.scalePlaceholder")}
+              onChange={(event) =>
+                setDraft((prev) => ({ ...prev, scale: event.target.value }))
+              }
+              className={PROP_DIALOG_INPUT_CLASS}
+            />
+            <p className="text-xs leading-5 text-muted-foreground">
+              {t("assets.props.scaleHint")}
+            </p>
           </div>
           {initial && (
             <AssetBeatReferences
@@ -333,6 +356,30 @@ export function PropsPanel({
 }) {
   const { t } = useTranslation();
   const props = useProps(project);
+  const buildProps = useBuildProps(project);
+  // loading 绑任务中心而不是 mutation.isPending：入队那次 POST 一返回就结束，
+  // 真正的抽取在后台跑，刷新后也只有任务中心还认得它。
+  const buildActivity = useTaskActivity("build_props", { episode: 0 });
+  const isBuilding = buildProps.isPending || buildActivity.isActive;
+  // 补水完成前 isActive 不可信，按钮先禁用，避免硬刷新后重复入队。
+  const buildDisabled = isBuilding || buildActivity.isRestoring;
+  const buildCost = useGenerationCreditCost("feature", "mainline.build_props");
+  const buildCostDisplay =
+    buildCost.data?.data.display ??
+    (buildCost.error instanceof BillingRuleNotConfiguredError
+      ? t("common.billingRuleNotConfiguredShort")
+      : null);
+  // SSE 只用来拿细粒度进度/步骤文案，并在完成时刷新道具列表；活跃与否由任务中心裁决。
+  const buildStream = useTaskStream({
+    taskType: "build_props",
+    project,
+    episode: 0,
+    enabled: buildActivity.isActive,
+    invalidateKeys: [queryKeys.props(project)],
+  });
+  const buildProgress =
+    buildStream.status === "idle" ? buildActivity.progress : buildStream.progress;
+  const buildLabel = buildStream.currentTask || buildActivity.currentTask;
   const createProp = useCreateProp(project);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<PropAsset | null>(null);
@@ -364,6 +411,14 @@ export function PropsPanel({
     return filtered.sort((a, b) => a.name.localeCompare(b.name));
   }, [allItems, searchQuery]);
   const gridRef = useAssetFocus(focusId, !props.isLoading && items.length > 0);
+
+  // SSE 断开或页面重进时 completion 事件可能收不到；任务中心一旦判定结束就补一次
+  // 拉取，否则用户会看到「生成完成但列表还是空的」。
+  const wasBuilding = useRef(false);
+  useEffect(() => {
+    if (wasBuilding.current && !buildActivity.isActive) void props.refetch();
+    wasBuilding.current = buildActivity.isActive;
+  }, [buildActivity.isActive, props.refetch]);
 
   async function handleSave(data: PropPayload) {
     // isPending only starts after confirmation; guard the entire save attempt.
@@ -397,6 +452,22 @@ export function PropsPanel({
       return;
     }
     toast.success(t("assets.props.deleted"));
+  }
+
+  async function handleBuildProps() {
+    let res;
+    try {
+      res = await buildProps.mutateAsync();
+    } catch (err) {
+      toast.error(backendErrorToastMessage(err, t));
+      return;
+    }
+    if (isErrorResponse(res)) {
+      toast.error(backendErrorResponseToastMessage(res, t));
+      return;
+    }
+    buildActivity.markStarted({ taskId: res.task_id });
+    toast.success(taskResponseToastMessage(res, t));
   }
 
   return (
@@ -438,6 +509,36 @@ export function PropsPanel({
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
+        <TooltipProvider delay={80}>
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  size="sm"
+                  onClick={handleBuildProps}
+                  disabled={buildDisabled}
+                  className="h-8 gap-1.5 rounded-[8px] bg-primary px-3 text-xs font-normal text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
+                />
+              }
+            >
+              {isBuilding ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Sparkles className="size-3.5" />
+              )}
+              {t("assets.props.build")}
+              <CreditCostInline
+                display={buildCostDisplay}
+                promotion={buildCost.data?.data.promotion}
+                className="text-primary-foreground"
+                iconClassName="text-primary-foreground drop-shadow-none [&_path]:fill-current"
+              />
+            </TooltipTrigger>
+            <TooltipContent side="bottom">
+              {t("assets.props.buildHint")}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </AssetHeaderActions>
       <div className="min-h-0 flex-1 overflow-auto p-6">
         {!props.isLoading && allItems.length > 0 && (
@@ -456,10 +557,49 @@ export function PropsPanel({
             />
           </div>
         )}
+        {isBuilding && allItems.length > 0 && (
+          <div className="mb-4 rounded-[8px] bg-white/[0.05] p-3">
+            <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+              <span className="min-w-0 truncate">
+                {buildLabel || t("assets.props.building")}
+              </span>
+              <span className="shrink-0 font-mono tabular-nums text-foreground/80">
+                {Math.round(buildProgress * 100)}%
+              </span>
+            </div>
+            <Progress value={buildProgress * 100} className="mt-3 h-1.5" />
+          </div>
+        )}
         {props.isLoading ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
             <Loader2 className="mr-2 size-4 animate-spin" />
             {t("common.loading")}
+          </div>
+        ) : allItems.length === 0 && isBuilding ? (
+          // 首次生成时列表本来就是空的，不给「正在生成」的反馈，用户会以为点了没反应。
+          <div className="flex h-full flex-col items-center justify-center text-center">
+            <div className="mb-3 flex size-12 items-center justify-center rounded-full border border-border bg-card">
+              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+            </div>
+            <div>
+              <h3 className="mb-1.5 text-sm font-semibold text-foreground">
+                {t("assets.props.buildingEmpty.title")}
+              </h3>
+              <p className="max-w-[16rem] text-xs leading-5 text-muted-foreground">
+                {t("assets.props.buildingEmpty.description")}
+              </p>
+            </div>
+            <div className="mt-4 w-full max-w-[220px] rounded-[8px] bg-white/[0.05] p-3">
+              <div className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+                <span className="min-w-0 truncate">
+                  {buildLabel || t("assets.props.building")}
+                </span>
+                <span className="shrink-0 font-mono tabular-nums text-foreground/80">
+                  {Math.round(buildProgress * 100)}%
+                </span>
+              </div>
+              <Progress value={buildProgress * 100} className="mt-3 h-1.5" />
+            </div>
           </div>
         ) : allItems.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center text-center">
@@ -470,22 +610,33 @@ export function PropsPanel({
               <h3 className="mb-1.5 text-sm font-semibold text-foreground">
                 {t("assets.props.emptyTitle")}
               </h3>
-              <p className="max-w-[15rem] text-xs leading-5 text-muted-foreground">
+              <p className="max-w-[16rem] text-xs leading-5 text-muted-foreground">
                 {t("assets.props.emptyDescription")}
               </p>
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                setEditing(null);
-                setDialogOpen(true);
-              }}
-              className={EMPTY_STATE_ACTION_BUTTON_CLASS}
-            >
-              <Plus className="size-3.5" />
-              {t("assets.props.newProp")}
-            </Button>
+            <div className="mt-4 flex flex-col items-center gap-2 sm:flex-row">
+              <Button
+                size="sm"
+                onClick={handleBuildProps}
+                disabled={buildDisabled}
+                className="h-9 gap-1.5 rounded-[8px] bg-primary px-3 text-xs font-normal text-primary-foreground shadow-none hover:bg-primary/85 active:bg-primary/75"
+              >
+                <Sparkles className="size-3.5" />
+                {t("assets.props.build")}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setEditing(null);
+                  setDialogOpen(true);
+                }}
+                className={EMPTY_STATE_ACTION_BUTTON_CLASS}
+              >
+                <Plus className="size-3.5" />
+                {t("assets.props.newProp")}
+              </Button>
+            </div>
           </div>
         ) : items.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-muted-foreground">

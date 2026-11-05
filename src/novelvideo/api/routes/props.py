@@ -20,6 +20,7 @@ from novelvideo.api.deps import (
 )
 from novelvideo.api.schemas import PropCreate, PropReferenceGenerateRequest, PropUpdate
 from novelvideo.models import NovelProp, build_prop_menu
+from novelvideo.novel_source import has_imported_novel, novel_import_required_response
 from novelvideo.project_config import load_project_config_file
 from novelvideo.sqlite_store import SQLiteStore
 from novelvideo.ports import get_task_backend
@@ -95,6 +96,7 @@ def _prop_payload(
         "description": prop.description,
         "owner": prop.owner,
         "notes": prop.notes,
+        "scale": getattr(prop, "scale", ""),
         "updated_at": (
             newest_updated_at(
                 getattr(prop, "updated_at", ""),
@@ -156,6 +158,7 @@ async def _local_episode_prop_payloads(
                     "description": menu_item.description,
                     "owner": menu_item.owner_identity_id,
                     "notes": "",
+                    "scale": "",
                     "updated_at": episode_updated_at,
                     "scope": "local",
                     "source_episode": episode_number,
@@ -260,6 +263,7 @@ async def create_prop(
         description=body.description,
         owner=body.owner,
         notes=body.notes,
+        scale=body.scale,
     )
     await store.add_prop(prop)
     return {
@@ -328,6 +332,54 @@ async def delete_prop(
         return {"ok": False, "error": f"Prop '{name}' not found"}
     deleted = await store.delete_prop(prop.name)
     return {"ok": True, "data": {"deleted": deleted}}
+
+
+@router.post("/projects/{project}/props/build")
+async def build_props(project: str, user: dict = Depends(get_api_user)):
+    """从已导入的原文一次性生成项目道具目录（AI 抽取，非分集规划）。
+
+    与 ``/characters/build``、``/scenes/build`` 同一套入队语义：这里只负责
+    校验前置条件并把任务丢进队列，真正的抽取在 runner 里跑，前端靠任务中心
+    的 SSE 拿进度。
+    """
+    resolved = await resolve_project_scope(project, user, required_role="editor")
+    ctx = resolved.ctx
+    if ctx is None:
+        return {"ok": False, "error": "道具构建需要 project context"}
+    # 没有原文时抽取必然 0 结果，先在这里挡掉，免得用户等一个注定失败的任务。
+    if not has_imported_novel(resolved.project_dir):
+        return novel_import_required_response()
+
+    # 重复点击会排队两次、付两次钱。只挡正在跑的那次：已完成/失败的允许重跑，
+    # 重跑时块级缓存会命中没变的原文块。
+    from novelvideo.task_state import ACTIVE_PROJECT_TASK_STATUSES, get_task_manager
+
+    running = get_task_manager().get_task_for_project(ctx, "build_props", 0)
+    if running is not None and running.status in ACTIVE_PROJECT_TASK_STATUSES:
+        return {
+            "ok": False,
+            "error": "道具构建正在进行中，请等待当前任务完成",
+            "code": "props.build_in_progress",
+        }
+
+    queued = await get_task_backend().enqueue_project_task(
+        ctx,
+        product_surface="mainline",
+        task_type="build_props",
+        queue_kind="default",
+        episode=0,
+        payload={"output_dir": resolved.output_dir},
+    )
+    return {
+        "ok": True,
+        "task_type": "build_props",
+        "task_id": queued.task_state.task_id,
+        "task_key": project_task_state_key("build_props", ctx.project_id, 0),
+        "backend": queued.backend,
+        "queue": queued.queue,
+        "message": "道具构建任务已进入队列",
+        "message_code": "tasks.toast.propsBuildQueued",
+    }
 
 
 @router.post("/projects/{project}/props/{name}/reference/generate-async")

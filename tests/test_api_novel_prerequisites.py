@@ -75,6 +75,27 @@ async def test_build_scenes_rejects_missing_novel_before_enqueue(tmp_path, monke
 
 
 @pytest.mark.asyncio
+async def test_build_props_rejects_missing_novel_before_enqueue(tmp_path, monkeypatch):
+    from novelvideo.api.routes import props
+
+    ctx = SimpleNamespace(project_id="project-1")
+
+    async def resolve_scope(project, user, *, required_role="viewer"):
+        return SimpleNamespace(ctx=ctx, project_dir=tmp_path, output_dir=str(tmp_path))
+
+    monkeypatch.setattr(props, "resolve_project_scope", resolve_scope)
+    monkeypatch.setattr(props, "get_task_backend", RejectEnqueueBackend)
+
+    response = await props.build_props("project-1", user={"username": "alice"})
+
+    assert response == {
+        "ok": False,
+        "code": NOVEL_IMPORT_REQUIRED_CODE,
+        "error": NOVEL_IMPORT_REQUIRED_MESSAGE,
+    }
+
+
+@pytest.mark.asyncio
 async def test_plan_episodes_rejects_missing_novel_before_enqueue(tmp_path, monkeypatch):
     from novelvideo.api.routes import episodes
 

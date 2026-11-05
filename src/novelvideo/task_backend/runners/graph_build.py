@@ -153,6 +153,10 @@ def run_build_props(
 
 
 async def _run_build_props(ctx: ProjectContext) -> dict[str, Any]:
+    # The API guards this at enqueue; repeating it here is the last line of
+    # defence for tasks queued before an import finished (or by another
+    # producer that never went through HTTP).
+    require_imported_novel(ctx.output_dir)
     store = await _load_store(ctx)
     try:
         def on_progress(progress: float | None, task: str) -> None:
@@ -171,7 +175,7 @@ async def _run_build_props(ctx: ProjectContext) -> dict[str, Any]:
             on_progress=on_progress,
             on_log=on_log,
         )
-        return {"props": len(props)}
+        return {"props": len(props), "added_props": len(props)}
     finally:
         await store.close()
 

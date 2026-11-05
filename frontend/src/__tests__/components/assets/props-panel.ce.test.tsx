@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // Copyright (c) 2026 ClaymoreLab
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import i18next from "i18next";
 import { I18nextProvider, initReactI18next } from "react-i18next";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -14,6 +15,17 @@ import { PropsPanel } from "@/components/assets/props-panel";
 const runtimeState = vi.hoisted(() => ({ isCeRuntime: true }));
 const toastErrorMock = vi.hoisted(() => vi.fn());
 const mutation = vi.hoisted(() => () => ({ mutateAsync: vi.fn(), isPending: false }));
+const buildPropsMock = vi.hoisted(() => ({
+  mutateAsync: vi.fn(),
+  isPending: false,
+}));
+const buildActivityMock = vi.hoisted(() => ({
+  isActive: false,
+  isRestoring: false,
+  progress: 0,
+  currentTask: "",
+  markStarted: vi.fn(),
+}));
 
 vi.mock("@/lib/runtime-config", () => ({
   isCeRuntime: () => runtimeState.isCeRuntime,
@@ -71,9 +83,26 @@ vi.mock("@/lib/queries/props", () => ({
   useCreateProp: mutation,
   useUpdateProp: mutation,
   useDeleteProp: mutation,
+  useBuildProps: () => buildPropsMock,
   useGeneratePropReferenceAsync: mutation,
   useUploadPropReference: mutation,
   useBatchGeneratePropReferences: mutation,
+}));
+
+// 道具生成按钮的进度/SSE 依赖任务中心；这里只关心按钮是否入队，直接打桩。
+vi.mock("@/hooks/use-task-stream", () => ({
+  useTaskStream: () => ({
+    status: "idle",
+    progress: 0,
+    currentTask: "",
+    result: null,
+    error: null,
+    logs: [],
+  }),
+}));
+
+vi.mock("@/task-center/use-task-activity", () => ({
+  useTaskActivity: () => buildActivityMock,
 }));
 
 vi.mock("@/lib/queries/asset-references", () => ({
@@ -136,6 +165,15 @@ beforeAll(async () => {
             props: {
               newProp: "New prop",
               newPropHint: "Create a prop.",
+              build: "Generate props with AI",
+              buildHint: "Scan the source for props.",
+              building: "Analysing the source...",
+              buildingEmpty: {
+                title: "Generating props",
+                description: "The AI is reading the source.",
+              },
+              scalePlaceholder: "e.g. about 1.1 m long",
+              scaleHint: "Give a comparable size reference.",
               editProp: "Edit prop",
               emptyTitle: "No props yet",
               emptyDescription: "Create a prop.",
@@ -156,6 +194,7 @@ beforeAll(async () => {
                 type: "Prop type",
                 owner: "Owner",
                 visualPrompt: "Visual prompt",
+                scale: "Scale",
               },
             },
           },
@@ -186,6 +225,10 @@ describe("PropsPanel CE generation credit gating", () => {
   beforeEach(() => {
     runtimeState.isCeRuntime = true;
     toastErrorMock.mockClear();
+    buildPropsMock.mutateAsync.mockReset();
+    buildActivityMock.markStarted.mockReset();
+    buildActivityMock.isActive = false;
+    buildActivityMock.isRestoring = false;
   });
 
   it("hides single prop reference costs without credit styling or credit errors", async () => {
@@ -199,5 +242,34 @@ describe("PropsPanel CE generation credit gating", () => {
     expect(toastErrorMock).not.toHaveBeenCalledWith(
       expect.stringMatching(/积分不足|credit|insufficient/i),
     );
+  });
+
+  it("enqueues an AI prop build from the header and marks the task as started", async () => {
+    const user = userEvent.setup();
+    buildPropsMock.mutateAsync.mockResolvedValue({
+      ok: true,
+      task_type: "build_props",
+      task_id: "task-1",
+      message: "queued",
+    });
+
+    renderPanel();
+
+    await user.click(
+      await screen.findByRole("button", { name: /Generate props with AI/i }),
+    );
+
+    expect(buildPropsMock.mutateAsync).toHaveBeenCalledTimes(1);
+    expect(buildActivityMock.markStarted).toHaveBeenCalledWith({ taskId: "task-1" });
+  });
+
+  it("disables the AI build button while a build is already running", async () => {
+    buildActivityMock.isActive = true;
+
+    renderPanel();
+
+    expect(
+      await screen.findByRole("button", { name: /Generate props with AI/i }),
+    ).toBeDisabled();
   });
 });
