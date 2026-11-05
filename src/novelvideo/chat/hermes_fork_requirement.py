@@ -107,11 +107,30 @@ def _looks_like_python(interpreter: str) -> bool:
     return "python" in pathlib.Path(interpreter).name.lower()
 
 
+def _sibling_interpreter(resolved: str) -> str | None:
+    """The python installed beside a packaged launcher.
+
+    venv and `uv tool` layouts keep the launcher and the interpreter that owns
+    its packages in the same directory. On Windows that is the only way to
+    find it: the launcher is a PE executable with no shebang to read, and
+    falling back to the API process's own python answers the wrong question —
+    it reports "not importable" for an install that is perfectly good.
+    """
+    import os
+    import pathlib
+
+    name = "python.exe" if os.name == "nt" else "python"
+    candidate = pathlib.Path(resolved).parent / name
+    return str(candidate) if candidate.is_file() else None
+
+
 def _worker_interpreter(cli_path) -> str | None:
     """The python that runs the hermes CLI, if it can be established.
 
     A console script's shebang names the interpreter its package is installed
-    into, which is exactly the environment the worker will import from.
+    into, which is exactly the environment the worker will import from. When
+    there is no shebang (a Windows launcher), the interpreter beside the
+    launcher serves the same purpose.
     """
     import pathlib
     import shutil
@@ -122,9 +141,9 @@ def _worker_interpreter(cli_path) -> str | None:
     try:
         first = pathlib.Path(resolved).read_text(errors="ignore").splitlines()[0]
     except (OSError, IndexError):
-        return None
+        return _sibling_interpreter(resolved)
     if not first.startswith("#!"):
-        return None
+        return _sibling_interpreter(resolved)
     parts = first[2:].strip().split()
     if not parts:
         return None

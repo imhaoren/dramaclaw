@@ -6,6 +6,8 @@ __pycache__/
 .env
 .env1
 /.venv/
+# Hermes fork 源码与独立 venv（scripts/setup-hermes.sh 与 .cache 约定）
+/.cache/
 /.playwright-mcp
 /.nicegui
 /output
